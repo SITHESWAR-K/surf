@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#07131e">
+  <meta name="description" content="Subway Suffer — a hand-built, local endless rail runner. Dodge trains, grab coins, chain missions and outrun the inspector.">
+  <title>Subway Suffer — Endless Rail Runner</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="app">
+    <canvas id="gameCanvas" role="img" aria-label="Subway Suffer game scene"></canvas>
+    <div class="scene-vignette" aria-hidden="true"></div>
+    <div class="scene-grain" aria-hidden="true"></div>
+
+    <!-- ============================== HUD ============================== -->
+    <section id="hud" class="hud is-hidden" aria-label="Game status">
+      <div class="hud-top">
+        <div class="score-panel">
+          <span class="eyebrow">SCORE</span>
+          <strong id="scoreValue" class="score-value">000000</strong>
+          <div class="score-meta">
+            <span id="distanceValue">0 m</span>
+            <i></i>
+            <span id="bestHud">BEST 0</span>
+          </div>
+        </div>
+
+        <div class="hud-actions">
+          <button id="soundBtn" class="icon-btn" type="button" aria-label="Mute sound" title="Mute (M)">
+            <svg class="icon-sound-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Zm12.5-.8a5.4 5.4 0 0 1 0 7.6M19 5.7a9 9 0 0 1 0 12.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg class="icon-sound-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Zm12 2l4 4m0-4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button id="pauseBtn" class="icon-btn" type="button" aria-label="Pause game" title="Pause (P)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+
+        <div class="coin-panel">
+          <div class="coin-panel-main">
+            <span class="coin-symbol" aria-hidden="true"><i></i></span>
+            <div>
+              <span class="eyebrow">COINS</span>
+              <strong id="coinValue">0</strong>
+            </div>
+          </div>
+          <button id="boardHud" class="board-hud" type="button" aria-label="Deploy hoverboard" title="Deploy hoverboard (H)">
+            <span class="board-mini" aria-hidden="true"></span>
+            <span class="board-hud-label">BOARD</span>
+            <b id="boardCount">×1</b>
+          </button>
+        </div>
+      </div>
+
+      <div id="powerupStack" class="powerup-stack" aria-label="Active power-ups"></div>
+
+      <div id="missionChip" class="mission-chip">
+        <span class="mission-chip-icon" aria-hidden="true">◆</span>
+        <span class="mission-chip-copy">
+          <small>MISSION</small>
+          <b id="missionText">Collect 50 coins</b>
+        </span>
+        <span id="missionProgress" class="mission-chip-progress">0 / 50</span>
+      </div>
+
+      <div id="toastLayer" class="toast-layer" aria-live="polite"></div>
+
+      <div id="touchControls" class="touch-controls" aria-label="Touch controls">
+        <button type="button" data-action="left" aria-label="Move left">◀</button>
+        <button type="button" data-action="right" aria-label="Move right">▶</button>
+        <button type="button" data-action="roll" aria-label="Roll">▼</button>
+        <button type="button" data-action="jump" aria-label="Jump">▲</button>
+      </div>
+
+      <div id="speedBadge" class="speed-badge"><span>SPEED</span><b id="speedValue">0</b><small>KM/H</small></div>
+    </section>
+
+    <!-- ============================== MENU ============================== -->
+    <section id="menu" class="screen menu-screen" aria-label="Main menu">
+      <div class="menu-wash" aria-hidden="true"></div>
+      <div class="menu-inner">
+        <header class="brand">
+          <div class="brand-kicker"><span></span>ENDLESS RAIL RUNNER<span></span></div>
+          <h1>
+            <span class="brand-subway">SUBWAY</span>
+            <span class="brand-suffer">SUFFER</span>
+          </h1>
+          <div class="brand-underline"><i></i><span>OUTRUN THE INSPECTOR</span><i></i></div>
+        </header>
+
+        <div class="menu-grid">
+          <section class="start-card">
+            <div class="save-strip">
+              <div><span>BEST</span><b id="menuBest">0</b></div>
+              <div><span>BANK</span><b id="menuCoins">0</b></div>
+              <div><span>RUNS</span><b id="menuRuns">0</b></div>
+            </div>
+
+            <button id="playBtn" class="play-btn" type="button">
+              <span class="play-btn-glow" aria-hidden="true"></span>
+              <span class="play-btn-copy">PLAY NOW<small>Press Enter</small></span>
+              <span class="play-btn-arrow" aria-hidden="true">›</span>
+            </button>
+
+            <div class="menu-controls">
+              <div class="control-row"><span class="keys"><kbd>←</kbd><kbd>→</kbd><kbd>A</kbd><kbd>D</kbd></span><span>Switch track</span></div>
+              <div class="control-row"><span class="keys"><kbd>↑</kbd><kbd>W</kbd><kbd>Space</kbd></span><span>Jump</span></div>
+              <div class="control-row"><span class="keys"><kbd>↓</kbd><kbd>S</kbd></span><span>Roll / fast-fall</span></div>
+              <div class="control-row"><span class="keys"><kbd>H</kbd></span><span>Deploy hoverboard</span></div>
+            </div>
+
+            <p class="swipe-note">On touch: swipe left, right, up or down. Tap the board badge to deploy a hoverboard.</p>
+          </section>
+
+          <aside class="runner-card">
+            <div class="panel-label">CHOOSE YOUR RUNNER</div>
+            <div id="runnerPicker" class="runner-picker">
+              <button class="runner-option is-active" data-skin="dash" type="button">
+                <canvas width="132" height="132" aria-hidden="true"></canvas>
+                <span class="runner-name">DASH</span>
+                <span class="runner-trait">Street rookie</span>
+                <i class="runner-check" aria-hidden="true">✓</i>
+              </button>
+              <button class="runner-option" data-skin="mika" type="button">
+                <canvas width="132" height="132" aria-hidden="true"></canvas>
+                <span class="runner-name">MIKA</span>
+                <span class="runner-trait">Rail artist</span>
+                <i class="runner-check" aria-hidden="true">✓</i>
+              </button>
+              <button class="runner-option" data-skin="rook" type="button">
+                <canvas width="132" height="132" aria-hidden="true"></canvas>
+                <span class="runner-name">ROOK</span>
+                <span class="runner-trait">Ex-inspector</span>
+                <i class="runner-check" aria-hidden="true">✓</i>
+              </button>
+            </div>
+            <div class="tip-card">
+              <span class="tip-num">PRO TIP</span>
+              <p>Trains have flat roofs. Jump as a carriage reaches you and you can run along the top for extra coins.</p>
+            </div>
+          </aside>
+        </div>
+
+        <footer class="menu-footer">
+          <button id="menuSoundBtn" class="text-btn" type="button" aria-label="Toggle sound">SOUND: ON</button>
+          <span class="footer-dot"></span>
+          <span>Handcrafted · no network required</span>
+          <span class="footer-dot"></span>
+          <span class="version">V1.0</span>
+        </footer>
+      </div>
+    </section>
+
+    <!-- ============================== PAUSE ============================== -->
+    <section id="pauseModal" class="modal is-hidden" aria-label="Paused" role="dialog" aria-modal="true">
+      <div class="modal-panel pause-panel">
+        <div class="modal-kicker">CATCH YOUR BREATH</div>
+        <h2 class="modal-title">PAUSED</h2>
+        <p class="modal-copy">The rails can wait. The inspector cannot.</p>
+        <div class="pause-stats">
+          <div><span>SCORE</span><b id="pauseScore">0</b></div>
+          <div><span>DISTANCE</span><b id="pauseDistance">0 m</b></div>
+          <div><span>COINS</span><b id="pauseCoins">0</b></div>
+        </div>
+        <div class="modal-actions">
+          <button id="resumeBtn" class="btn btn-primary" type="button">RESUME RUN</button>
+          <div class="modal-action-row">
+            <button id="restartBtn" class="btn btn-ghost" type="button">RESTART</button>
+            <button id="quitBtn" class="btn btn-ghost" type="button">MAIN MENU</button>
+          </div>
+        </div>
+        <p class="modal-hint"><kbd>P</kbd> pause · <kbd>M</kbd> sound · <kbd>H</kbd> hoverboard</p>
+      </div>
+    </section>
+
+    <!-- ============================== GAME OVER ============================== -->
+    <section id="gameOverModal" class="modal is-hidden" aria-label="Run complete" role="dialog" aria-modal="true">
+      <div class="modal-panel gameover-panel">
+        <div id="newBest" class="new-best is-hidden"><span>NEW HIGH SCORE</span></div>
+        <div class="modal-kicker" id="gameOverKicker">THE INSPECTOR WINS</div>
+        <h2 class="modal-title" id="gameOverTitle">RUN OVER</h2>
+        <div class="final-score"><span>FINAL SCORE</span><strong id="finalScore">0</strong></div>
+        <div class="result-strip">
+          <div><span>DISTANCE</span><b id="finalDistance">0 m</b></div>
+          <div><span>COINS</span><b id="finalCoins">0</b></div>
+          <div><span>TOP SPEED</span><b id="finalSpeed">0</b></div>
+        </div>
+        <div class="mission-results-wrap">
+          <div class="panel-label">RUN MISSIONS</div>
+          <div id="missionResults" class="mission-results"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="againBtn" class="btn btn-primary" type="button">RUN AGAIN <small>Enter</small></button>
+          <button id="menuBtn" class="btn btn-ghost" type="button">MAIN MENU</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="countdown" class="countdown is-hidden" aria-live="assertive"><span>GO!</span></div>
+    <div id="flash" class="screen-flash" aria-hidden="true"></div>
+  </main>
+
+  <noscript><div class="noscript">This game needs JavaScript enabled.</div></noscript>
+
+  <script src="js/data.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
