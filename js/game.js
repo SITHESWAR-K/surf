@@ -1,5 +1,5 @@
 /* ============================================================
-   SUBWAY SUFFER — gameplay, inputs, progression and UI
+   SUBWAY SUFFER — gameplay, inputs, progression, shop and UI
    ============================================================ */
 (function () {
   "use strict";
@@ -7,6 +7,7 @@
   const SS = window.SS;
   const U = SS.U;
   const C = SS.CONFIG;
+  const Logic = SS.Logic;
   const Audio = SS.Audio;
   const Render = SS.Render;
   const view = SS.view;
@@ -19,6 +20,13 @@
     hud: $("hud"),
     menu: $("menu"),
     playBtn: $("playBtn"),
+    shopBtn: $("shopBtn"),
+    shopBtnSub: $("shopBtnSub"),
+    weatherBtn: $("weatherBtn"),
+    shopModal: $("shopModal"),
+    shopCoins: $("shopCoins"),
+    shopList: $("shopList"),
+    closeShopBtn: $("closeShopBtn"),
     againBtn: $("againBtn"),
     menuBtn: $("menuBtn"),
     resumeBtn: $("resumeBtn"),
@@ -33,6 +41,7 @@
     coinValue: $("coinValue"),
     distanceValue: $("distanceValue"),
     bestHud: $("bestHud"),
+    comboIndicator: $("comboIndicator"),
     speedValue: $("speedValue"),
     speedBadge: $("speedBadge"),
     powerupStack: $("powerupStack"),
@@ -71,9 +80,11 @@
       y: 0,
       vy: 0,
       lane: 1,
+      prevLane: 1,
       onGround: true,
       rolling: false,
       rollTimer: 0,
+      rollBuffer: 0,
       jumpBuffer: 0,
       tilt: 0,
       runPhase: 0,
@@ -82,7 +93,8 @@
       invuln: 0,
       shadowY: 0,
       supportTrain: null,
-      effects: { magnet: 0, multiplier: 0, sneakers: 0 }
+      wasJetpacking: false,
+      effects: { magnet: 0, multiplier: 0, sneakers: 0, jetpack: 0 }
     };
   }
 
@@ -102,12 +114,16 @@
     shakeY: 0,
     speedLines: 0,
     jumpPose: 0.6,
-    cameraOffset: 0
+    cameraOffset: 0,
+    rain: 0,
+    tunnel: 0,
+    inspectorDist: 7.8,
+    inspectorX: 0
   };
 
   let score = 0;
   let coinsRun = 0;
-  let hoverboards = 1;
+  let hoverboards = save.boardStock || 1;
   let missions = SS.makeMissions();
   let stats = makeStats();
   let nextRowWorldZ = 58;
@@ -119,16 +135,17 @@
   let crashTimer = 0;
   let goTimer = 0;
   let powerupEls = {};
-  let displayTime = 0;
+  let powerupMax = { magnet: 10, multiplier: 12, sneakers: 12, jetpack: 7.5, board: 16 };
   let hudCache = {};
   let countdownHideTimer = 0;
   let footDustTimer = 0;
-  let hornTimer = 10;
+  let jetpackCoinTimer = 0;
+  let inspectorAlert = 0;
+  let nearMissCombo = 0;
+  let nearMissTimer = 0;
+  let shopOpen = false;
   let lastScoreShown = -1;
-  let highScoreAtStart = save.highScore;
   let pointerStart = null;
-  let lastParticleCleanup = 0;
-  let booted = false;
 
   function makeStats() {
     return {
@@ -214,31 +231,319 @@
     }
   }
 
+  function updateWeatherUI() {
+    if (!els.weatherBtn) return;
+    const mode = (save.weatherMode || "auto").toUpperCase();
+    els.weatherBtn.textContent = "WEATHER: " + mode;
+  }
+
+  function cycleWeather() {
+    const order = ["auto", "clear", "rain"];
+    const idx = order.indexOf(save.weatherMode || "auto");
+    save.weatherMode = order[(idx + 1) % order.length];
+    SS.persistSave(save);
+    updateWeatherUI();
+    Audio.unlock();
+    Audio.play("ui");
+  }
+
+  function computeRainTarget(distance) {
+    if (save.weatherMode === "clear") return 0;
+    if (save.weatherMode === "rain") return game.mode === "menu" ? 0.72 : 0.92;
+    if (game.mode === "menu") return 0;
+    const wave = Math.sin(distance * 0.0048 + 0.9);
+    return wave > 0.36 ? 0.85 : 0;
+  }
+
+  function isSkinUnlocked(key) {
+    const skin = SS.SKINS[key];
+    if (!skin) return false;
+    return skin.cost === 0 || (Array.isArray(save.unlockedSkins) && save.unlockedSkins.includes(key));
+  }
+
+  function canAffordAnyShopItem() {
+    for (const key of Object.keys(Logic.UPGRADE_DEFS)) {
+      const check = Logic.attemptPurchaseUpgrade(save, key);
+      if (check.ok) return true;
+    }
+    if (Logic.attemptBuyBoard(save, 80, 5).ok) return true;
+    if (!isSkinUnlocked("vex") && save.totalCoins >= SS.SKINS.vex.cost) return true;
+    return false;
+  }
+
   function updateMenuStats() {
     setText(els.menuBest, U.formatNum(save.highScore));
     setText(els.menuCoins, U.formatNum(save.totalCoins));
     setText(els.menuRuns, U.formatNum(save.runs));
     setText(els.bestHud, "BEST " + U.formatNum(save.highScore));
+    if (els.shopCoins) setText(els.shopCoins, U.formatNum(save.totalCoins));
+    if (els.shopBtnSub) {
+      if (canAffordAnyShopItem()) {
+        setText(els.shopBtnSub, "Upgrade ready!");
+      } else {
+        setText(els.shopBtnSub, "Upgrades & gear");
+      }
+    }
   }
 
   function updateMenuPreview() {
     game.skin = selectedSkin;
     if (game.mode === "menu") game.player = makePlayer();
     els.runnerPicker.querySelectorAll(".runner-option").forEach((btn) => {
-      btn.classList.toggle("is-active", btn.dataset.skin === selectedSkin);
-      const skin = SS.SKINS[btn.dataset.skin];
+      const key = btn.dataset.skin;
+      const skin = SS.SKINS[key];
+      const unlocked = isSkinUnlocked(key);
+      btn.classList.toggle("is-active", key === selectedSkin);
+      btn.classList.toggle("is-locked", !unlocked);
       if (skin) btn.style.setProperty("--skin", skin.css);
+      const traitEl = btn.querySelector(".runner-trait");
+      if (traitEl && skin) {
+        traitEl.textContent = unlocked ? (traitEl.dataset.defaultTrait || skin.trait) : skin.cost + " coins";
+      }
     });
   }
 
+  function unlockSkin(key, audible) {
+    const skin = SS.SKINS[key];
+    if (!skin || isSkinUnlocked(key)) return true;
+    if (save.totalCoins < skin.cost) return false;
+    save.totalCoins -= skin.cost;
+    save.unlockedSkins = Array.from(new Set([...(save.unlockedSkins || []), key]));
+    save.skin = key;
+    selectedSkin = key;
+    game.skin = key;
+    SS.persistSave(save);
+    updateMenuStats();
+    updateMenuPreview();
+    if (shopOpen) renderShop();
+    if (audible) {
+      Audio.unlock();
+      Audio.play("buy");
+    }
+    return true;
+  }
+
   function selectSkin(key, audible) {
-    if (!SS.SKINS[key] || key === selectedSkin) return;
+    if (!SS.SKINS[key]) return;
+    if (!isSkinUnlocked(key)) {
+      if (save.totalCoins >= SS.SKINS[key].cost) {
+        unlockSkin(key, audible);
+      } else {
+        openShop();
+      }
+      return;
+    }
+    if (key === selectedSkin) return;
     selectedSkin = key;
     game.skin = key;
     save.skin = key;
     SS.persistSave(save);
     updateMenuPreview();
-    if (audible) Audio.play("ui");
+    if (shopOpen) renderShop();
+    if (audible) {
+      Audio.unlock();
+      Audio.play("ui");
+    }
+  }
+
+  // ------------------------------------------------------------
+  // Rail Shop modal
+  // ------------------------------------------------------------
+  function openShop() {
+    if (game.mode !== "menu") return;
+    shopOpen = true;
+    renderShop();
+    setHidden(els.shopModal, false);
+    Audio.unlock();
+    Audio.play("ui");
+    if (els.closeShopBtn) els.closeShopBtn.focus({ preventScroll: true });
+  }
+
+  function closeShop() {
+    if (!shopOpen) return;
+    shopOpen = false;
+    setHidden(els.shopModal, true);
+    Audio.play("ui");
+  }
+
+  function renderShop() {
+    if (!els.shopList) return;
+    setText(els.shopCoins, U.formatNum(save.totalCoins));
+    els.shopList.innerHTML = "";
+
+    // 1. Power-up upgrades
+    for (const key of Object.keys(Logic.UPGRADE_DEFS)) {
+      const def = Logic.UPGRADE_DEFS[key];
+      const level = (save.upgrades && save.upgrades[key]) || 0;
+      const curDur = Logic.getPowerupDuration(key, level);
+      const nextDur = Logic.getPowerupDuration(key, Math.min(def.maxLevel, level + 1));
+      const check = Logic.attemptPurchaseUpgrade(save, key);
+      const isMaxed = level >= def.maxLevel;
+
+      const row = document.createElement("div");
+      row.className = "shop-item";
+
+      const info = document.createElement("div");
+      info.className = "shop-item-info";
+
+      const title = document.createElement("div");
+      title.className = "shop-item-title";
+      title.textContent = def.name.toUpperCase();
+
+      const desc = document.createElement("div");
+      desc.className = "shop-item-desc";
+      desc.textContent = isMaxed
+        ? "Max level · " + curDur.toFixed(1).replace(/\.0$/, "") + "s duration"
+        : "Duration " + curDur.toFixed(1).replace(/\.0$/, "") + "s → " + nextDur.toFixed(1).replace(/\.0$/, "") + "s";
+
+      const pips = document.createElement("div");
+      pips.className = "shop-pips";
+      for (let i = 0; i < def.maxLevel; i++) {
+        const pip = document.createElement("i");
+        if (i < level) pip.className = "is-filled";
+        pips.appendChild(pip);
+      }
+
+      info.appendChild(title);
+      info.appendChild(desc);
+      info.appendChild(pips);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "shop-buy-btn" + (isMaxed ? " is-maxed" : "");
+      if (isMaxed) {
+        btn.textContent = "MAXED";
+        btn.disabled = true;
+      } else {
+        const cost = Logic.getUpgradeCost(key, level);
+        btn.textContent = U.formatNum(cost) + " C";
+        btn.disabled = !check.ok;
+        btn.addEventListener("click", () => {
+          const res = Logic.attemptPurchaseUpgrade(save, key);
+          if (!res.ok) return;
+          save.totalCoins = res.nextCoins;
+          save.upgrades[key] = res.nextLevel;
+          SS.persistSave(save);
+          Audio.play("buy");
+          updateMenuStats();
+          renderShop();
+        });
+      }
+
+      row.appendChild(info);
+      row.appendChild(btn);
+      els.shopList.appendChild(row);
+    }
+
+    // 2. Starting Hoverboard stock
+    {
+      const stock = save.boardStock || 1;
+      const cap = 5;
+      const check = Logic.attemptBuyBoard(save, 80, cap);
+      const isMaxed = stock >= cap;
+
+      const row = document.createElement("div");
+      row.className = "shop-item";
+
+      const info = document.createElement("div");
+      info.className = "shop-item-info";
+
+      const title = document.createElement("div");
+      title.className = "shop-item-title";
+      title.textContent = "STARTING HOVERBOARDS";
+
+      const desc = document.createElement("div");
+      desc.className = "shop-item-desc";
+      desc.textContent = isMaxed
+        ? "Max loadout · start every run with ×" + stock + " boards"
+        : "Start every run with ×" + stock + " → ×" + (stock + 1) + " crash shields";
+
+      const pips = document.createElement("div");
+      pips.className = "shop-pips";
+      for (let i = 0; i < cap; i++) {
+        const pip = document.createElement("i");
+        if (i < stock) pip.className = "is-filled";
+        pips.appendChild(pip);
+      }
+
+      info.appendChild(title);
+      info.appendChild(desc);
+      info.appendChild(pips);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "shop-buy-btn" + (isMaxed ? " is-maxed" : "");
+      if (isMaxed) {
+        btn.textContent = "MAXED";
+        btn.disabled = true;
+      } else {
+        btn.textContent = "80 C";
+        btn.disabled = !check.ok;
+        btn.addEventListener("click", () => {
+          const res = Logic.attemptBuyBoard(save, 80, cap);
+          if (!res.ok) return;
+          save.totalCoins = res.nextCoins;
+          save.boardStock = res.nextStock;
+          SS.persistSave(save);
+          Audio.play("buy");
+          updateMenuStats();
+          renderShop();
+        });
+      }
+
+      row.appendChild(info);
+      row.appendChild(btn);
+      els.shopList.appendChild(row);
+    }
+
+    // 3. Unlockable Runner: VEX
+    {
+      const vex = SS.SKINS.vex;
+      const unlocked = isSkinUnlocked("vex");
+      const active = selectedSkin === "vex";
+
+      const row = document.createElement("div");
+      row.className = "shop-item";
+
+      const info = document.createElement("div");
+      info.className = "shop-item-info";
+
+      const title = document.createElement("div");
+      title.className = "shop-item-title";
+      title.textContent = "RUNNER: VEX";
+
+      const desc = document.createElement("div");
+      desc.className = "shop-item-desc";
+      desc.textContent = unlocked
+        ? "Night courier unlocked · stealth jacket & amber hoverboard"
+        : "Unlock stealth night courier with amber hoverboard deck";
+
+      info.appendChild(title);
+      info.appendChild(desc);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "shop-buy-btn" + (active ? " is-maxed" : "");
+      if (active) {
+        btn.textContent = "EQUIPPED";
+        btn.disabled = true;
+      } else if (unlocked) {
+        btn.textContent = "EQUIP";
+        btn.addEventListener("click", () => {
+          selectSkin("vex", true);
+        });
+      } else {
+        btn.textContent = U.formatNum(vex.cost) + " C";
+        btn.disabled = save.totalCoins < vex.cost;
+        btn.addEventListener("click", () => {
+          unlockSkin("vex", true);
+        });
+      }
+
+      row.appendChild(info);
+      row.appendChild(btn);
+      els.shopList.appendChild(row);
+    }
   }
 
   // ------------------------------------------------------------
@@ -248,6 +553,7 @@
     Render.init(canvas);
     Audio.setMuted(save.muted);
     updateSoundUI();
+    updateWeatherUI();
     updateMenuStats();
 
     els.runnerPicker.querySelectorAll(".runner-option").forEach((btn) => {
@@ -262,16 +568,29 @@
     bindEvents();
     setModeUI("menu");
     requestAnimationFrame(loop);
-    booted = true;
+
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("autostart") === "1") {
+        startRun();
+      }
+    } catch (err) {
+      /* ignore malformed query */
+    }
   }
 
   function setModeUI(mode) {
+    document.body.dataset.state = mode;
     const inGame = mode !== "menu";
     setHidden(els.menu, inGame);
     if (inGame) els.menu.classList.remove("leaving");
     setHidden(els.hud, !inGame);
     setHidden(els.pauseModal, mode !== "paused");
     setHidden(els.gameOverModal, mode !== "gameover");
+    if (inGame && shopOpen) {
+      shopOpen = false;
+      setHidden(els.shopModal, true);
+    }
     if (mode === "menu") {
       els.hud.classList.add("is-hidden");
     }
@@ -289,26 +608,38 @@
     game.shakeX = 0;
     game.shakeY = 0;
     game.speedLines = 0;
+    game.tunnel = 0;
+    game.inspectorDist = 7.8;
+    game.inspectorX = 0;
+    inspectorAlert = 0;
+    nearMissCombo = 0;
+    nearMissTimer = 0;
     shake = 0;
     setHidden(els.countdown, true);
+    setHidden(els.comboIndicator, true);
     els.menu.classList.remove("is-hidden", "leaving");
     updateMenuPreview();
     updateMenuStats();
     setModeUI("menu");
     els.menu.scrollTop = 0;
     Audio.stopMusic();
+    Audio.updateAmbience(0, 0, 0, false);
     updateHud(true);
   }
 
   function startRun() {
     if (game.mode === "playing") return;
+    shopOpen = false;
+    setHidden(els.shopModal, true);
+
     Audio.unlock();
     Audio.startMusic();
     Audio.play("ui");
+    Audio.play("whistle");
 
     score = 0;
     coinsRun = 0;
-    hoverboards = 1;
+    hoverboards = save.boardStock || 1;
     stats = makeStats();
     missions = SS.makeMissions();
     nextRowWorldZ = 58;
@@ -326,28 +657,42 @@
     game.shakeY = 0;
     game.speedLines = 0;
     game.jumpPose = 0.6;
+    game.tunnel = 0;
+    game.rain = save.weatherMode === "rain" ? 0.85 : 0;
+    game.inspectorDist = 2.95;
+    game.inspectorX = 0;
+    inspectorAlert = 3.2;
+    nearMissCombo = 0;
+    nearMissTimer = 0;
+    jetpackCoinTimer = 0;
+    powerupMax = {
+      magnet: Logic.getPowerupDuration("magnet", save.upgrades.magnet),
+      multiplier: Logic.getPowerupDuration("multiplier", save.upgrades.multiplier),
+      sneakers: Logic.getPowerupDuration("sneakers", save.upgrades.sneakers),
+      jetpack: Logic.getPowerupDuration("jetpack", save.upgrades.jetpack),
+      board: 16
+    };
     shake = 0;
     crashTimer = 0;
     goTimer = 1.05;
     footDustTimer = 0;
-    hornTimer = U.rand(12, 22);
-    highScoreAtStart = save.highScore;
     lastCrashCause = "train";
     lastScoreShown = -1;
     hudCache = {};
-    displayTime = 0;
     save.played = true;
     game.skin = selectedSkin;
     game.mode = "playing";
 
     setModeUI("playing");
     els.menu.classList.add("is-hidden");
+    setHidden(els.comboIndicator, true);
     buildPowerupChips();
     spawnIntroCoins();
     spawnAhead();
     updateHud(true);
     updateMissionHUD(true);
     updateBoardHud();
+    updatePowerupHUD();
     updateHighScoreUI();
     countdown("GO!", 820);
     Audio.play("countdown", { last: true });
@@ -363,6 +708,7 @@
       setText(els.pauseCoins, U.formatNum(coinsRun));
       setModeUI("paused");
       Audio.stopMusic();
+      Audio.updateAmbience(0, 0, 0, false);
       Audio.play("ui");
       if (els.resumeBtn) els.resumeBtn.focus();
     } else if (game.mode === "paused") {
@@ -384,6 +730,8 @@
   function hideModalPanels() {
     setHidden(els.pauseModal, true);
     setHidden(els.gameOverModal, true);
+    setHidden(els.shopModal, true);
+    shopOpen = false;
   }
 
   function updateHighScoreUI() {
@@ -395,6 +743,15 @@
   // ------------------------------------------------------------
   function bindEvents() {
     els.playBtn.addEventListener("click", startRun);
+    if (els.shopBtn) els.shopBtn.addEventListener("click", openShop);
+    if (els.closeShopBtn) els.closeShopBtn.addEventListener("click", closeShop);
+    if (els.shopModal) {
+      els.shopModal.addEventListener("click", (event) => {
+        if (event.target === els.shopModal) closeShop();
+      });
+    }
+    if (els.weatherBtn) els.weatherBtn.addEventListener("click", cycleWeather);
+
     els.againBtn.addEventListener("click", () => {
       hideModalPanels();
       startRun();
@@ -472,7 +829,6 @@
 
   function onKeyDown(event) {
     const code = event.code;
-    const key = event.key;
     if (event.repeat) {
       if (code === "ArrowLeft" || code === "ArrowRight" || code === "ArrowUp" || code === "ArrowDown" || code === "Space") {
         event.preventDefault();
@@ -486,16 +842,24 @@
       return;
     }
 
+    if (shopOpen) {
+      if (code === "Escape") {
+        event.preventDefault();
+        closeShop();
+      }
+      return;
+    }
+
     if (game.mode === "menu") {
       if (code === "Enter" || code === "Space") {
         event.preventDefault();
         startRun();
       } else if (code === "ArrowLeft" || code === "ArrowRight") {
         event.preventDefault();
-        const order = Object.keys(SS.SKINS);
-        const index = order.indexOf(selectedSkin);
-        const next = (index + (code === "ArrowRight" ? 1 : order.length - 1)) % order.length;
-        selectSkin(order[next], true);
+        const unlocked = Object.keys(SS.SKINS).filter(isSkinUnlocked);
+        const index = Math.max(0, unlocked.indexOf(selectedSkin));
+        const next = (index + (code === "ArrowRight" ? 1 : unlocked.length - 1)) % unlocked.length;
+        selectSkin(unlocked[next], true);
       }
       return;
     }
@@ -574,8 +938,9 @@
     if (next === player.lane) {
       return;
     }
+    player.prevLane = player.lane;
     player.lane = next;
-    player.tilt = dir * 0.7;
+    player.tilt = dir * 0.72;
     Audio.play("switch", { dir });
     spawnLaneDust(dir);
   }
@@ -583,10 +948,11 @@
   function jump() {
     if (game.mode !== "playing") return;
     const player = game.player;
+    if (player.effects.jetpack > 0) return;
     if (player.onGround) {
       doJump();
     } else {
-      player.jumpBuffer = 0.13;
+      player.jumpBuffer = 0.14;
     }
   }
 
@@ -597,23 +963,33 @@
     player.onGround = false;
     player.rolling = false;
     player.rollTimer = 0;
+    player.rollBuffer = 0;
     stats.jumps++;
     spawnJumpDust();
     Audio.play("jump");
   }
 
+  function startRoll() {
+    const player = game.player;
+    player.rolling = true;
+    player.rollTimer = C.rollTime;
+    player.rollBuffer = 0;
+    player.jumpBuffer = 0;
+    stats.rolls++;
+    spawnRollDust();
+    Audio.play("roll");
+  }
+
   function roll() {
     if (game.mode !== "playing") return;
     const player = game.player;
+    if (player.effects.jetpack > 0) return;
     if (player.onGround) {
-      player.rolling = true;
-      player.rollTimer = C.rollTime;
-      player.jumpBuffer = 0;
-      stats.rolls++;
-      spawnRollDust();
-      Audio.play("roll");
+      startRoll();
     } else {
-      player.vy = Math.min(player.vy, -18);
+      // Fast-fall slam + buffered roll on landing so mid-air down inputs chain smoothly under overheads.
+      player.vy = Math.min(player.vy, -21);
+      player.rollBuffer = 0.28;
       player.rolling = false;
     }
   }
@@ -631,7 +1007,8 @@
     }
     hoverboards--;
     player.boardTime = 16;
-    player.invuln = Math.max(player.invuln, 0.4);
+    powerupMax.board = 16;
+    player.invuln = Math.max(player.invuln, 0.45);
     stats.boards++;
     Audio.play("board");
     showToast("HOVERBOARD DEPLOYED", "teal");
@@ -674,6 +1051,8 @@
   function updateMenu(dt) {
     game.menuScroll += dt * 5.5;
     game.theme = SS.themeFor(0.03);
+    game.rain = U.approach(game.rain, computeRainTarget(0), dt * 1.4);
+    game.tunnel = 0;
     game.player.runPhase += dt * 2;
     game.player.tilt = Math.sin(game.time * 0.8) * 0.03;
     game.speedLines = 0;
@@ -790,7 +1169,7 @@
 
   function spawnJumpDust() {
     const p = game.player;
-    const foot = Render.project(p.x, 0, 0);
+    const foot = Render.project(p.x, p.shadowY, 0);
     spawnParticle({ kind: "ring", x: foot.x, y: foot.y, vx: 0, vy: 0, life: 0.4, size: 15, color: "rgba(255,241,205,0.5)" });
     for (let i = 0; i < 7; i++) {
       spawnParticle({
@@ -810,7 +1189,7 @@
 
   function spawnRollDust() {
     const p = game.player;
-    const foot = Render.project(p.x, 0, 0);
+    const foot = Render.project(p.x, p.shadowY, 0);
     for (let i = 0; i < 10; i++) {
       spawnParticle({
         kind: "smoke",
@@ -829,7 +1208,7 @@
 
   function spawnBoardBurst() {
     const p = game.player;
-    const foot = Render.project(p.x, 0.08, 0);
+    const foot = Render.project(p.x, p.y + 0.08, 0);
     spawnParticle({ kind: "ring", x: foot.x, y: foot.y, life: 0.55, size: 24, color: "#2fe6c2" });
     for (let i = 0; i < 18; i++) {
       const a = U.rand(0, Math.PI * 2);
@@ -878,30 +1257,52 @@
     goTimer = Math.max(0, goTimer - dt);
 
     const diff = U.clamp(game.distance / 1700, 0, 1);
-    const targetSpeed = Math.min(C.maxSpeed, C.baseSpeed + game.distance * C.speedRamp);
-    game.speed = U.approach(game.speed, targetSpeed, dt * (2.6 + diff * 2));
+    const jetBonus = player.effects.jetpack > 0 ? 6.5 : 0;
+    const targetSpeed = Math.min(C.maxSpeed, C.baseSpeed + game.distance * C.speedRamp) + jetBonus;
+    game.speed = U.approach(game.speed, targetSpeed, dt * (2.8 + diff * 2.2));
     game.topSpeed = Math.max(game.topSpeed, game.speed);
     const travel = game.speed * dt;
     game.distance += travel;
     game.theme = SS.themeFor(0.018 + (game.distance / 3400) % 1);
 
+    // Dynamic concrete subway tunnels and weather
+    game.tunnel = Logic.computeTunnelFactor(game.distance, C.tunnelPeriod, C.tunnelLength);
+    game.rain = U.approach(game.rain, computeRainTarget(game.distance), dt * 0.65);
+
     const mult = player.effects.multiplier > 0 ? 2 : 1;
     score += travel * (3.8 + diff * 1.4) * mult;
 
-    // Timers and animated state.
+    // Timers and animated state
     player.boardTime = Math.max(0, player.boardTime - dt);
     player.invuln = Math.max(0, player.invuln - dt);
     player.jumpBuffer = Math.max(0, player.jumpBuffer - dt);
+    player.rollBuffer = Math.max(0, player.rollBuffer - dt);
     player.effects.magnet = Math.max(0, player.effects.magnet - dt);
     player.effects.multiplier = Math.max(0, player.effects.multiplier - dt);
     player.effects.sneakers = Math.max(0, player.effects.sneakers - dt);
+    player.effects.jetpack = Math.max(0, player.effects.jetpack - dt);
+
+    // Inspector pursuit dynamics
+    inspectorAlert = Math.max(0, inspectorAlert - dt);
+    const targetInspectorDist = inspectorAlert > 0 ? 2.85 + Math.sin(game.time * 4.5) * 0.14 : 7.8;
+    game.inspectorDist = U.approach(game.inspectorDist, targetInspectorDist, dt * (inspectorAlert > 0 ? 3.8 : 1.15));
+    game.inspectorX += (player.x - game.inspectorX) * Math.min(1, dt * 6.5);
+
+    // Near-miss combo decay
+    if (nearMissTimer > 0) {
+      nearMissTimer = Math.max(0, nearMissTimer - dt);
+      if (nearMissTimer <= 0) {
+        nearMissCombo = 0;
+        setHidden(els.comboIndicator, true);
+      }
+    }
 
     if (player.rolling) {
       player.rollTimer -= dt;
       if (player.rollTimer <= 0) player.rolling = false;
     }
 
-    // Lateral movement follows the selected lane with a springy tilt.
+    // Lateral movement follows the selected lane with a springy tilt
     const targetX = (player.lane - 1) * view.laneW;
     const ease = 1 - Math.exp(-dt * 17);
     player.x += (targetX - player.x) * ease;
@@ -911,30 +1312,44 @@
     spawnAhead();
     moveEntities(travel, dt);
 
-    const supportInfo = getSupportInfo();
-    updateVertical(dt, supportInfo);
-    if (game.mode !== "playing") return;
+    // Jetpack aerial cruising vs normal gravity/ramp physics
+    if (player.effects.jetpack > 0) {
+      player.wasJetpacking = true;
+      player.onGround = false;
+      player.rolling = false;
+      player.vy = 0;
+      player.y += (C.jetpackHeight - player.y) * Math.min(1, dt * 6.5);
+      player.shadowY = 0;
+      updateJetpackTrail(dt);
+    } else {
+      if (player.wasJetpacking) {
+        player.wasJetpacking = false;
+        player.invuln = Math.max(player.invuln, 1.35);
+      }
+      const supportInfo = getSupportInfo();
+      updateVertical(dt, supportInfo);
+      if (game.mode !== "playing") return;
 
-    collideWithTrains();
-    if (game.mode !== "playing") return;
+      collideWithTrains();
+      if (game.mode !== "playing") return;
 
-    collideWithProps(dt);
-    if (game.mode !== "playing") return;
+      collideWithProps();
+      if (game.mode !== "playing") return;
 
-    collectPickups(dt);
+      checkNearMisses();
+    }
+
+    collectPickups();
     cleanupEntities();
     updateFootsteps(dt);
     checkMissions();
 
-    game.speedLines = U.smoothstep(25, 41, game.speed) * (0.7 + diff * 0.3);
+    const speedRatio = U.clamp((game.speed - C.baseSpeed) / (C.maxSpeed - C.baseSpeed), 0, 1);
+    Audio.updateAmbience(speedRatio, game.tunnel, game.rain, true);
+
+    game.speedLines = U.smoothstep(25, 41, game.speed) * (0.7 + diff * 0.3) + (player.effects.jetpack > 0 ? 0.32 : 0);
     game.jumpPose = U.clamp(Math.abs(player.vy) / 11, 0.2, 1);
     game.cameraOffset = Math.sin(game.time * 0.37) * 0.012 + (shake > 1 ? U.rand(-0.02, 0.02) : 0);
-
-    hornTimer -= dt;
-    if (hornTimer <= 0) {
-      Audio.play("horn");
-      hornTimer = U.rand(17, 28);
-    }
 
     updateHud();
     updateBoardHud();
@@ -942,9 +1357,36 @@
     updatePowerupEffects();
   }
 
+  function updateJetpackTrail(dt) {
+    const player = game.player;
+    // Emit rocket exhaust sparks & smoke
+    if (Math.random() < dt * 36) {
+      const p = Render.project(player.x + U.rand(-0.18, 0.18), player.y + 0.55, 0);
+      spawnParticle({
+        kind: Math.random() > 0.4 ? "spark" : "smoke",
+        x: p.x + U.rand(-5, 5),
+        y: p.y + U.rand(-2, 8),
+        vx: U.rand(-24, 24),
+        vy: U.rand(55, 130),
+        gravity: 60,
+        life: U.rand(0.18, 0.42),
+        size: U.rand(2.2, 5.5),
+        color: Math.random() > 0.35 ? "#ff9b3d" : "#ff4f8b",
+        alpha: 0.85
+      });
+    }
+    // Continuously spawn sky-high coin ribbons while jetpacking
+    jetpackCoinTimer -= dt;
+    if (jetpackCoinTimer <= 0 && player.effects.jetpack > 1.2) {
+      jetpackCoinTimer = 0.72;
+      const skyLane = U.randInt(0, 2);
+      spawnCoinLine(skyLane, 76, 5, 2.5, C.jetpackHeight + 0.55);
+    }
+  }
+
   function updateFootsteps(dt) {
     const player = game.player;
-    if (!player.onGround || player.rolling) return;
+    if (!player.onGround || player.rolling || player.effects.jetpack > 0) return;
     footDustTimer -= dt;
     if (footDustTimer > 0) return;
     footDustTimer = Math.max(0.075, 0.2 - game.speed * 0.0024);
@@ -959,7 +1401,7 @@
         gravity: 10,
         life: U.rand(0.22, 0.42),
         size: U.rand(1.5, 4),
-        color: "rgba(226,213,188,0.17)",
+        color: game.rain > 0.3 ? "rgba(185,220,245,0.28)" : "rgba(226,213,188,0.17)",
         alpha: 0.5
       });
     }
@@ -969,7 +1411,19 @@
     const player = game.player;
     for (const e of game.entities) {
       e.prevZ = e.z;
-      e.z -= travel;
+      const extra = e.type === "train" && e.moving ? (e.trainSpeed || 15) * dt : 0;
+      e.z -= travel + extra;
+
+      // Trigger directional Doppler horn when an oncoming express train enters approach range
+      if (e.type === "train" && e.moving && !e.hornPlayed && e.z < 88 && e.z > 22) {
+        e.hornPlayed = true;
+        Audio.play("horn", { pan: (e.lane - 1) * 0.65, doppler: true });
+      }
+
+      // Keep non-magnetized pickups dynamically aligned with live viewport lane width
+      if ((e.type === "coin" || e.type === "powerup") && !e.magnetized) {
+        e.x = laneX(e.lane);
+      }
 
       if (e.type === "coin" && !e.collected && player.effects.magnet > 0 && e.z > 0 && e.z < C.magnetRadius) {
         e.magnetized = true;
@@ -999,29 +1453,45 @@
     let support = 0;
     let shadow = 0;
     let train = null;
+    let onRamp = false;
+
     for (const e of game.entities) {
-      if (e.type !== "train" || e.removed) continue;
-      const zNear = e.z - e.len * 0.5;
-      const zFar = e.z + e.len * 0.5;
-      if (zFar < -0.52 || zNear > 0.52) continue;
-      if (Math.abs(player.x - laneX(e.lane)) > view.laneW * 0.45) continue;
-      const roof = e.roofHeight || C.trainHeight;
-      if (player.y >= roof - 0.32 || (player.supportTrain === e && player.y > 0.3)) {
-        if (roof > support) {
-          support = roof;
-          train = e;
+      if (e.removed) continue;
+      if (e.type === "train") {
+        const zNear = e.z - e.len * 0.5;
+        const zFar = e.z + e.len * 0.5;
+        if (zFar < -0.52 || zNear > 0.52) continue;
+        if (Math.abs(player.x - laneX(e.lane)) > view.laneW * 0.45) continue;
+        const roof = e.roofHeight || C.trainHeight;
+        if (player.y >= roof - 0.36 || (player.supportTrain === e && player.y > 0.3)) {
+          if (roof > support) {
+            support = roof;
+            train = e;
+          }
+        }
+        if (player.y >= roof - 0.78) shadow = Math.max(shadow, roof);
+      } else if (e.type === "ramp") {
+        if (Math.abs(player.x - laneX(e.lane)) > view.laneW * 0.46) continue;
+        const rampH = Logic.computeRampHeight(0, e.z, e.len, e.targetHeight || C.trainHeight);
+        if (rampH > 0.01) {
+          if (player.y >= rampH - 0.45 || player.onGround) {
+            if (rampH > support) {
+              support = rampH;
+              onRamp = true;
+            }
+          }
+          shadow = Math.max(shadow, rampH);
         }
       }
-      if (player.y >= roof - 0.75) shadow = Math.max(shadow, roof);
     }
-    return { support, shadow, train };
+    return { support, shadow, train, onRamp };
   }
 
   function updateVertical(dt, info) {
     const player = game.player;
     const wasGrounded = player.onGround;
 
-    if (player.onGround && player.y > info.support + 0.055) {
+    if (player.onGround && !info.onRamp && player.y > info.support + 0.055) {
       player.onGround = false;
       player.vy = Math.min(player.vy, 0);
       player.supportTrain = null;
@@ -1077,10 +1547,15 @@
     }
     addShake(1.3);
     Audio.play("land");
+    if (player.rollBuffer > 0) {
+      startRoll();
+    }
   }
 
   function collideWithTrains() {
     const player = game.player;
+    if (player.effects.jetpack > 0) return;
+
     for (const e of game.entities) {
       if (e.type !== "train" || e.removed) continue;
       const zNear = e.z - e.len * 0.5;
@@ -1088,7 +1563,40 @@
       if (zFar < -0.55 || zNear > 0.55) continue;
       if (Math.abs(player.x - laneX(e.lane)) > view.laneW * 0.46) continue;
       const roof = e.roofHeight || C.trainHeight;
-      if (player.y < roof - 0.3) {
+      if (player.y < roof - 0.32) {
+        // Lateral side-graze (train nose is already past player): stumble & summon inspector instead of unfair instant death
+        if (zNear < -0.58) {
+          const outcome = Logic.resolveStumbleOrCrash(
+            inspectorAlert,
+            player.boardTime > 0,
+            player.invuln > 0,
+            player.effects.jetpack > 0
+          );
+          if (outcome === "ignore") return;
+          if (outcome === "boardSave") {
+            boardSave(e);
+            return;
+          }
+          if (outcome === "busted") {
+            game.inspectorDist = 0.85;
+            beginCrash("inspector");
+            return;
+          }
+          // Stumble bounce back out of the carriage side
+          const safeLane = player.prevLane !== e.lane ? player.prevLane : (e.lane === 1 ? 0 : 1);
+          player.lane = U.clamp(safeLane, 0, 2);
+          player.invuln = 0.65;
+          inspectorAlert = 7.5;
+          addShake(11);
+          Audio.play("stumble");
+          Audio.play("whistle");
+          burstAtWorld(player.x, Math.max(0.6, player.y + 0.7), 0, {
+            count: 14,
+            colors: ["#ffc62d", "#ff7a2f", "#fff2c2"]
+          });
+          showToast("STUMBLED! INSPECTOR CLOSING IN", "pink");
+          return;
+        }
         handleHit(e, "train");
         return;
       }
@@ -1101,8 +1609,10 @@
     return false;
   }
 
-  function collideWithProps(dt) {
+  function collideWithProps() {
     const player = game.player;
+    if (player.effects.jetpack > 0) return;
+
     for (const e of game.entities) {
       if (e.type !== "barrier" && e.type !== "overhead") continue;
       if (e.removed || e.hit) continue;
@@ -1127,9 +1637,58 @@
     }
   }
 
+  function checkNearMisses() {
+    const player = game.player;
+    for (const e of game.entities) {
+      if (e.removed || e.nearMissed) continue;
+      if (e.type !== "train" && e.type !== "barrier" && e.type !== "overhead") continue;
+
+      const passZ = e.type === "train" ? e.z - e.len * 0.5 : e.z;
+      if (passZ > -0.15 || passZ < -4.2) continue;
+
+      let qualified = false;
+      const laneDiff = Math.abs(player.lane - e.lane);
+      if (laneDiff === 1 && Math.abs(player.tilt) > 0.12 && player.y < 1.8) {
+        qualified = true;
+      } else if (e.type === "barrier" && laneDiff === 0 && player.y >= 0.82 && player.y < 2.35) {
+        qualified = true;
+      } else if (e.type === "overhead" && laneDiff === 0 && player.rolling) {
+        qualified = true;
+      }
+
+      if (!qualified) continue;
+      e.nearMissed = true;
+      const bonus = Logic.computeNearMissBonus(nearMissCombo);
+      nearMissCombo = bonus.combo;
+      nearMissTimer = 4.5;
+      stats.nearMisses++;
+      const mult = player.effects.multiplier > 0 ? 2 : 1;
+      const gained = bonus.points * mult;
+      score += gained;
+
+      Audio.play("whoosh", { pan: U.clamp((e.lane - player.lane) * 0.55, -0.7, 0.7) });
+      const p = Render.project(player.x, Math.max(1.1, player.y + 1.55), 0);
+      spawnParticle({
+        kind: "text",
+        x: p.x,
+        y: p.y - 24,
+        vy: -36,
+        life: 0.78,
+        size: 16,
+        color: "#58dcff",
+        label: "CLOSE CALL +" + gained
+      });
+
+      if (els.comboIndicator) {
+        setText(els.comboIndicator, "COMBO ×" + nearMissCombo);
+        setHidden(els.comboIndicator, false);
+      }
+    }
+  }
+
   function handleHit(entity, cause) {
     const player = game.player;
-    if (player.invuln > 0 || game.mode !== "playing") return;
+    if (player.invuln > 0 || player.effects.jetpack > 0 || game.mode !== "playing") return;
     if (player.boardTime > 0) {
       boardSave(entity);
       return;
@@ -1160,6 +1719,7 @@
     if (game.mode !== "playing") return;
     lastCrashCause = cause;
     game.mode = "crash";
+    document.body.dataset.state = "crash";
     crashTimer = 0;
     game.speedLines = 0;
     game.player.crashSpin = 0;
@@ -1169,7 +1729,9 @@
     flashScreen();
     Audio.play("crash");
     Audio.stopMusic();
-    if (cause === "train") Audio.play("horn");
+    Audio.updateAmbience(0, 0, 0, false);
+    if (cause === "train") Audio.play("horn", { doppler: false });
+    if (cause === "inspector") Audio.play("whistle");
     const p = game.player;
     const burstPoint = Render.project(p.x, Math.max(0.4, p.y) + 0.9, 0);
     spawnParticle({ kind: "ring", x: burstPoint.x, y: burstPoint.y, life: 0.7, size: 42, color: "#fff1c2" });
@@ -1194,6 +1756,7 @@
     player.y = Math.max(0, player.y + player.vy * dt);
     player.crashSpin += dt * (2.5 + Math.max(0, 1 - crashTimer) * 8);
     player.shadowY = 0;
+    game.inspectorDist = U.approach(game.inspectorDist, 0.95, dt * 4.5);
 
     if (crashTimer > 0.2 && Math.random() < dt * 18) {
       const p = Render.project(player.x + U.rand(-0.35, 0.35), Math.max(0.1, player.y) + U.rand(0, 1), 0);
@@ -1213,8 +1776,7 @@
     if (crashTimer >= 1.24) endRun();
   }
 
-  function updateGameOver(dt) {
-    // The frozen action stays visible beneath the results panel.
+  function updateGameOver() {
     if (game.player) {
       game.player.shadowY = 0;
     }
@@ -1222,47 +1784,46 @@
 
   function updatePowerupEffects() {
     const player = game.player;
-    if (player.boardTime <= 0 && game.mode === "playing" && player._hadBoard) {
-      // no-op hook kept deliberately quiet; the board simply powers down
-    }
     player._hadBoard = player.boardTime > 0;
   }
 
   // ------------------------------------------------------------
   // Pickups
   // ------------------------------------------------------------
-  function collectPickups(dt) {
+  function collectPickups() {
     const player = game.player;
     const magnet = player.effects.magnet > 0;
     for (const e of game.entities) {
       if (e.collected || e.removed) continue;
       if (e.type === "coin") {
-        const dx = Math.abs(e.x - player.x);
+        const cx = e.magnetized ? e.x : laneX(e.lane);
+        const dx = Math.abs(cx - player.x);
         const dy = Math.abs(e.y - (player.y + 0.84));
         const dz = Math.abs(e.z);
-        const canCollect = dz < (magnet ? 1.7 : 1.0) &&
-          dx < view.laneW * (magnet ? 1.25 : 0.52) &&
-          dy < (magnet ? 1.8 : 1.25);
-        if (canCollect) collectCoin(e);
+        const canCollect = dz < (magnet ? 1.7 : 1.05) &&
+          dx < view.laneW * (magnet ? 1.25 : 0.54) &&
+          dy < (magnet ? 1.85 : 1.3);
+        if (canCollect) collectCoin(e, cx);
       } else if (e.type === "powerup") {
-        const dx = Math.abs(e.x - player.x);
+        const px = laneX(e.lane);
+        const dx = Math.abs(px - player.x);
         const dz = Math.abs(e.z);
         const dy = Math.abs(1.2 - (player.y + 0.9));
-        if (dz < 1.1 && dx < view.laneW * 0.58 && dy < 1.6) {
-          collectPowerup(e);
+        if (dz < 1.15 && dx < view.laneW * 0.58 && dy < 1.65) {
+          collectPowerup(e, px);
         }
       }
     }
   }
 
-  function collectCoin(e) {
+  function collectCoin(e, worldX) {
     const player = game.player;
     e.collected = true;
     coinsRun++;
     const mult = player.effects.multiplier > 0 ? 2 : 1;
     score += 10 * mult;
-    Audio.play("coin");
-    const p = Render.project(e.x, e.y, e.z);
+    Audio.play("coin", { pan: U.clamp((worldX / (view.laneW || 1.75)) * 0.35, -0.5, 0.5) });
+    const p = Render.project(worldX, e.y, e.z);
     for (let i = 0; i < 5; i++) {
       const a = U.rand(0, TAU);
       spawnParticle({
@@ -1294,15 +1855,15 @@
     updateHud();
   }
 
-  function collectPowerup(e) {
+  function collectPowerup(e, worldX) {
     const player = game.player;
     const def = SS.POWERUPS[e.power];
     e.collected = true;
     e.removed = true;
     stats.powerups++;
     score += 25 * (player.effects.multiplier > 0 ? 2 : 1);
-    Audio.play("powerup");
-    const p = Render.project(e.x, 1.2, e.z);
+    Audio.play(e.power === "jetpack" ? "jetpack" : "powerup");
+    const p = Render.project(worldX, 1.2, e.z);
     spawnParticle({ kind: "ring", x: p.x, y: p.y, life: 0.55, size: 26, color: def.color });
     for (let i = 0; i < 14; i++) {
       const a = U.rand(0, TAU);
@@ -1324,14 +1885,28 @@
     if (e.power === "board") {
       if (player.boardTime > 0) {
         player.boardTime = Math.min(28, player.boardTime + 8);
+        powerupMax.board = Math.max(powerupMax.board, player.boardTime);
         showToast("HOVERBOARD +8 SECONDS", "teal");
       } else {
-        hoverboards = Math.min(3, hoverboards + 1);
+        hoverboards = Math.min(5, hoverboards + 1);
         showToast("HOVERBOARD ADDED TO INVENTORY", "teal");
       }
     } else {
-      player.effects[e.power] = Math.min(26, player.effects[e.power] + def.duration);
-      showToast(def.name + " ACTIVATED", "teal");
+      const level = (save.upgrades && save.upgrades[e.power]) || 0;
+      const dur = Logic.getPowerupDuration(e.power, level);
+      player.effects[e.power] = Math.min(30, player.effects[e.power] + dur);
+      powerupMax[e.power] = Math.max(dur, player.effects[e.power]);
+      if (e.power === "jetpack") {
+        player.rolling = false;
+        player.rollTimer = 0;
+        player.onGround = false;
+        jetpackCoinTimer = 0.25;
+        spawnCoinLine(player.lane, 36, 6, 2.5, C.jetpackHeight + 0.55);
+        addShake(4);
+        showToast("TURBO JETPACK LAUNCH", "pink");
+      } else {
+        showToast(def.name + " ACTIVATED", "teal");
+      }
     }
     updateBoardHud();
     updatePowerupHUD();
@@ -1365,32 +1940,62 @@
 
     const forceTrain = rowCount >= nextTrainRow;
     const built = [];
+    let hasMovingTrain = false;
+
     for (let i = 0; i < count; i++) {
       const lane = candidates[i];
       const type = forceTrain && i === 0 ? "train" : chooseObstacleType(diff);
-      built.push(spawnObstacle(lane, z, type));
+      const allowMoving = type === "train" && !hasMovingTrain && (diff > 0.08 || rowCount >= 5) && Math.random() < 0.38;
+      const obs = spawnObstacle(lane, z, type, { moving: allowMoving });
+      if (obs.moving) hasMovingTrain = true;
+      built.push(obs);
     }
 
-    // Later in the run, park a train on the spare lane too so players thread
-    // the gap between two consists. One lane always stays completely clear.
+    // Later in the run, park a second train so players thread the gap. One lane always stays clear.
     if (forceTrain && diff > 0.45 && count === 1 && Math.random() < 0.42) {
-      built.push(spawnObstacle(candidates[1], z, "train"));
+      built.push(spawnObstacle(candidates[1], z, "train", { moving: false }));
     }
 
     if (forceTrain) nextTrainRow = rowCount + U.randInt(4, 6);
 
-    // A reliable coin lane rewards reading the row quickly.
+    // Reliable coin lane
     if (Math.random() < 0.9) {
       spawnCoinLine(freeLane, z + U.rand(-1.5, 1.5), U.randInt(4, 7), 2.35, 0.78);
     }
 
-    // Gold arcs over low barriers make the intended move obvious.
+    // Gold arcs over low barriers, steel boarding ramps & roof coins on parked trains
     for (const e of built) {
       if (e.type === "barrier" && Math.random() < 0.62) {
         spawnCoinArc(e.lane, e.z, U.randInt(4, 6));
       }
-      if (e.type === "train" && Math.random() < 0.55) {
-        spawnCoinLine(e.lane, e.z, U.randInt(3, 5), 2.3, C.trainHeight + 0.72);
+      if (e.type === "train") {
+        if (!e.moving && Math.random() < 0.44) {
+          const rampLen = 7.4;
+          const rampZ = e.z - e.len * 0.5 - rampLen * 0.5;
+          game.entities.push({
+            type: "ramp",
+            lane: e.lane,
+            z: rampZ,
+            len: rampLen,
+            targetHeight: C.trainHeight,
+            prevZ: rampZ
+          });
+          // Coins leading up the steel ramp and along the carriage roof
+          for (let k = 0; k < 3; k++) {
+            const t = (k + 0.5) / 3;
+            game.entities.push({
+              type: "coin",
+              lane: e.lane,
+              x: laneX(e.lane),
+              z: rampZ - rampLen * 0.5 + rampLen * t,
+              y: C.trainHeight * t + 0.65,
+              phase: k * 0.4
+            });
+          }
+          spawnCoinLine(e.lane, e.z, U.randInt(4, 6), 2.25, C.trainHeight + 0.72);
+        } else if (Math.random() < 0.55) {
+          spawnCoinLine(e.lane, e.z, U.randInt(3, 5), 2.3, C.trainHeight + 0.72);
+        }
       }
     }
 
@@ -1410,20 +2015,25 @@
     return "overhead";
   }
 
-  function spawnObstacle(lane, z, type) {
+  function spawnObstacle(lane, z, type, opts) {
+    opts = opts || {};
     let e;
     if (type === "train") {
       const len = U.rand(12, 21);
+      const moving = !!opts.moving;
       e = {
         type: "train",
         lane,
-        z,
+        z: moving ? z + 24 : z,
         len,
         roofHeight: C.trainHeight,
         widthScale: 0.8,
         variant: U.randInt(0, 4),
         lights: true,
-        prevZ: z
+        moving,
+        trainSpeed: moving ? U.rand(13, 19) : 0,
+        hornPlayed: false,
+        prevZ: moving ? z + 24 : z
       };
     } else if (type === "overhead") {
       e = {
@@ -1477,8 +2087,8 @@
 
   function spawnPowerup(lane, z) {
     let power;
-    if (Math.random() < 0.18) power = "board";
-    else power = U.pick(["magnet", "multiplier", "sneakers", "magnet"]);
+    if (Math.random() < 0.16) power = "board";
+    else power = U.pick(["magnet", "multiplier", "sneakers", "jetpack", "magnet"]);
     game.entities.push({
       type: "powerup",
       lane,
@@ -1508,7 +2118,7 @@
     for (let i = 0; i < list.length; i++) {
       const e = list[i];
       if (e.collected || e.removed) continue;
-      const out = e.type === "train"
+      const out = (e.type === "train" || e.type === "ramp")
         ? e.z + e.len * 0.5 < -11
         : e.z < -12;
       if (out) continue;
@@ -1532,6 +2142,7 @@
       case "rolls": return stats.rolls;
       case "powerups": return stats.powerups;
       case "boards": return stats.boards;
+      case "nearMisses": return stats.nearMisses;
       default: return 0;
     }
   }
@@ -1638,12 +2249,17 @@
       setText(els.boardCount, "×" + hoverboards);
     }
     els.boardHud.disabled = active || hoverboards <= 0 || game.mode !== "playing";
-    els.boardHud.setAttribute("aria-label", active ? "Hoverboard active, " + Math.ceil(player.boardTime) + " seconds remaining" : "Deploy hoverboard, " + hoverboards + " in inventory");
+    els.boardHud.setAttribute(
+      "aria-label",
+      active
+        ? "Hoverboard active, " + Math.ceil(player.boardTime) + " seconds remaining"
+        : "Deploy hoverboard, " + hoverboards + " in inventory"
+    );
   }
 
   function buildPowerupChips() {
     if (powerupEls.magnet) return;
-    const order = ["magnet", "multiplier", "sneakers", "board"];
+    const order = ["jetpack", "magnet", "multiplier", "sneakers", "board"];
     powerupEls = {};
     for (const key of order) {
       const def = SS.POWERUPS[key];
@@ -1674,12 +2290,12 @@
     if (!powerupEls.magnet) return;
     const player = game.player;
     const values = {
+      jetpack: player.effects.jetpack,
       magnet: player.effects.magnet,
       multiplier: player.effects.multiplier,
       sneakers: player.effects.sneakers,
       board: player.boardTime
     };
-    const maxes = { magnet: 10, multiplier: 12, sneakers: 12, board: 16 };
     for (const key of Object.keys(values)) {
       const entry = powerupEls[key];
       if (!entry) continue;
@@ -1687,8 +2303,11 @@
       const visible = value > 0.02;
       entry.chip.classList.toggle("is-hidden", !visible);
       if (visible) {
+        const denom = Math.max(1, powerupMax[key] || 10);
         setText(entry.time, Math.ceil(value) + "s");
-        entry.bar.style.transform = "scaleX(" + U.clamp(value / maxes[key], 0, 1) + ")";
+        entry.bar.style.transform = "scaleX(" + U.clamp(value / denom, 0, 1) + ")";
+      } else {
+        powerupMax[key] = key === "board" ? 16 : Logic.getPowerupDuration(key, (save.upgrades && save.upgrades[key]) || 0);
       }
     }
   }
@@ -1716,7 +2335,8 @@
     const copy = {
       train: { kicker: "TRAIN 1 — YOU 0", title: "FLATTENED" },
       barrier: { kicker: "THE RAILS FIGHT BACK", title: "TRIPPED UP" },
-      overhead: { kicker: "MIND YOUR HEAD", title: "TOO TALL" }
+      overhead: { kicker: "MIND YOUR HEAD", title: "TOO TALL" },
+      inspector: { kicker: "CAUGHT RED-HANDED", title: "BUSTED" }
     }[lastCrashCause] || { kicker: "THE INSPECTOR WINS", title: "RUN OVER" };
     setText(els.gameOverKicker, copy.kicker);
     setText(els.gameOverTitle, copy.title);
@@ -1727,6 +2347,7 @@
     updateHud(true);
     updatePowerupHUD();
     Audio.stopMusic();
+    Audio.updateAmbience(0, 0, 0, false);
     if (isNewBest) {
       Audio.play("newBest");
       spawnConfetti();
@@ -1768,4 +2389,3 @@
     boot();
   }
 })();
-

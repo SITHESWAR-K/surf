@@ -8,7 +8,7 @@
   <title>Subway Suffer — Endless Rail Runner</title>
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body data-state="menu">
   <main id="app">
     <canvas id="gameCanvas" role="img" aria-label="Subway Suffer game scene"></canvas>
     <div class="scene-vignette" aria-hidden="true"></div>
@@ -24,6 +24,7 @@
             <span id="distanceValue">0 m</span>
             <i></i>
             <span id="bestHud">BEST 0</span>
+            <span id="comboIndicator" class="combo-indicator is-hidden">COMBO ×2</span>
           </div>
         </div>
 
@@ -97,20 +98,26 @@
               <div><span>RUNS</span><b id="menuRuns">0</b></div>
             </div>
 
-            <button id="playBtn" class="play-btn" type="button">
-              <span class="play-btn-glow" aria-hidden="true"></span>
-              <span class="play-btn-copy">PLAY NOW<small>Press Enter</small></span>
-              <span class="play-btn-arrow" aria-hidden="true">›</span>
-            </button>
+            <div class="start-actions">
+              <button id="playBtn" class="play-btn" type="button">
+                <span class="play-btn-glow" aria-hidden="true"></span>
+                <span class="play-btn-copy">PLAY NOW<small>Press Enter</small></span>
+                <span class="play-btn-arrow" aria-hidden="true">›</span>
+              </button>
+              <button id="shopBtn" class="shop-btn" type="button" aria-label="Open Rail Shop">
+                <span class="shop-btn-title">RAIL SHOP</span>
+                <small id="shopBtnSub">Upgrades &amp; gear</small>
+              </button>
+            </div>
 
             <div class="menu-controls">
               <div class="control-row"><span class="keys"><kbd>←</kbd><kbd>→</kbd><kbd>A</kbd><kbd>D</kbd></span><span>Switch track</span></div>
-              <div class="control-row"><span class="keys"><kbd>↑</kbd><kbd>W</kbd><kbd>Space</kbd></span><span>Jump</span></div>
-              <div class="control-row"><span class="keys"><kbd>↓</kbd><kbd>S</kbd></span><span>Roll / fast-fall</span></div>
-              <div class="control-row"><span class="keys"><kbd>H</kbd></span><span>Deploy hoverboard</span></div>
+              <div class="control-row"><span class="keys"><kbd>↑</kbd><kbd>W</kbd><kbd>Space</kbd></span><span>Jump / climb roofs</span></div>
+              <div class="control-row"><span class="keys"><kbd>↓</kbd><kbd>S</kbd></span><span>Roll / slam-roll</span></div>
+              <div class="control-row"><span class="keys"><kbd>H</kbd><kbd>Shift</kbd></span><span>Deploy hoverboard</span></div>
             </div>
 
-            <p class="swipe-note">On touch: swipe left, right, up or down. Tap the board badge to deploy a hoverboard.</p>
+            <p class="swipe-note">On touch: swipe left, right, up or down. Tap the board button to deploy a hoverboard.</p>
           </section>
 
           <aside class="runner-card">
@@ -134,10 +141,16 @@
                 <span class="runner-trait">Ex-inspector</span>
                 <i class="runner-check" aria-hidden="true">✓</i>
               </button>
+              <button class="runner-option" data-skin="vex" type="button">
+                <canvas width="132" height="132" aria-hidden="true"></canvas>
+                <span class="runner-name">VEX</span>
+                <span class="runner-trait" data-default-trait="Night courier">350 coins</span>
+                <i class="runner-check" aria-hidden="true">✓</i>
+              </button>
             </div>
             <div class="tip-card">
-              <span class="tip-num">PRO TIP</span>
-              <p>Trains have flat roofs. Jump as a carriage reaches you and you can run along the top for extra coins.</p>
+              <span class="tip-num">RAIL INTEL</span>
+              <p>Watch for oncoming express headlights, hit steel ramps to run rooftops, and dodge close calls to build combos. Graze a carriage side and the inspector closes in.</p>
             </div>
           </aside>
         </div>
@@ -145,10 +158,30 @@
         <footer class="menu-footer">
           <button id="menuSoundBtn" class="text-btn" type="button" aria-label="Toggle sound">SOUND: ON</button>
           <span class="footer-dot"></span>
-          <span>Handcrafted · no network required</span>
+          <button id="weatherBtn" class="text-btn" type="button" aria-label="Cycle weather mode">WEATHER: AUTO</button>
           <span class="footer-dot"></span>
-          <span class="version">V1.0</span>
+          <span>Dynamic weather · tunnels · express rails</span>
         </footer>
+      </div>
+    </section>
+
+    <!-- ============================== RAIL SHOP ============================== -->
+    <section id="shopModal" class="modal is-hidden" aria-label="Rail Shop" role="dialog" aria-modal="true">
+      <div class="modal-panel shop-panel">
+        <div class="shop-header">
+          <div>
+            <div class="modal-kicker shop-kicker">YARD SUPPLY</div>
+            <h2 class="modal-title shop-title">RAIL SHOP</h2>
+          </div>
+          <div class="shop-bank">
+            <span>COIN BANK</span>
+            <strong id="shopCoins">0</strong>
+          </div>
+        </div>
+        <div id="shopList" class="shop-list"></div>
+        <div class="modal-actions">
+          <button id="closeShopBtn" class="btn btn-primary" type="button">DONE</button>
+        </div>
       </div>
     </section>
 
@@ -204,6 +237,7 @@
   <noscript><div class="noscript">This game needs JavaScript enabled.</div></noscript>
 
   <script src="js/data.js"></script>
+  <script src="js/logic.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/render.js"></script>
   <script src="js/game.js"></script>

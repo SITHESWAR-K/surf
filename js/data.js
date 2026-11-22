@@ -80,57 +80,57 @@
   const padScore = (n) => String(Math.max(0, Math.floor(n))).padStart(6, "0");
 
   // ------------------------------------------------------------
-  // Mood / time-of-day palettes
+  // Mood / time-of-day palettes (natural atmospheric lighting)
   // ------------------------------------------------------------
   const DAY = {
-    skyTop: "#1d86c9", skyMid: "#65bce5", skyLow: "#f6d3a0",
-    haze: "#efc898", sun: "#fff5cf", sunGlow: "#ffdd85",
-    cloud: "#fdf5e4", cloudShade: "#b9d8e5",
-    farBuild: "#8db7c9", nearBuild: "#486c7a", window: "#f7ddaa",
-    ground: "#545354", ballast: "#746b60", sleeper: "#594b3d", rail: "#8d9698", railShine: "#eef6f0",
-    wall: "#b2a290", wallDark: "#7c6f61",
+    skyTop: "#1c7dc0", skyMid: "#62b5de", skyLow: "#f0cfa0",
+    haze: "#e4c295", sun: "#fff6d6", sunGlow: "#ffda82",
+    cloud: "#faf2e4", cloudShade: "#b3cedb",
+    farBuild: "#7ea5b8", nearBuild: "#425f6d", window: "#f5dca9",
+    ground: "#4d4c4e", ballast: "#6d655b", sleeper: "#524437", rail: "#8a9498", railShine: "#f2f8f5",
+    wall: "#a79989", wallDark: "#716558",
     night: 0.0, sunY: 0.16, sunX: 0.76, fog: 0.82,
-    shadow: "#1a1c1e", tint: "#ffffff"
+    shadow: "#15191d", tint: "#ffffff"
   };
   const GOLDEN = {
-    skyTop: "#2e72b7", skyMid: "#e4a46a", skyLow: "#ffd08a",
-    haze: "#f1b87d", sun: "#fff0c2", sunGlow: "#ffb455",
-    cloud: "#ffe7cf", cloudShade: "#d8b1a1",
-    farBuild: "#a4837f", nearBuild: "#5f5159", window: "#ffdda0",
-    ground: "#554a4b", ballast: "#7b665a", sleeper: "#5a4639", rail: "#968d89", railShine: "#fff6df",
-    wall: "#b3957d", wallDark: "#7e6857",
+    skyTop: "#2b6aa8", skyMid: "#dc9a63", skyLow: "#ffc882",
+    haze: "#eab077", sun: "#ffefc0", sunGlow: "#ffae4e",
+    cloud: "#ffe2c6", cloudShade: "#cda799",
+    farBuild: "#997976", nearBuild: "#544750", window: "#ffd896",
+    ground: "#4c4345", ballast: "#725e53", sleeper: "#523f33", rail: "#918884", railShine: "#fff4da",
+    wall: "#a98c75", wallDark: "#745f50",
     night: 0.12, sunY: 0.30, sunX: 0.81, fog: 0.9,
-    shadow: "#251b20", tint: "#fff1df"
+    shadow: "#20171c", tint: "#ffeed9"
   };
   const SUNSET = {
-    skyTop: "#313a79", skyMid: "#c15f75", skyLow: "#ffad5e",
-    haze: "#e99568", sun: "#ffd28a", sunGlow: "#ff7b37",
-    cloud: "#ffc9a5", cloudShade: "#a66b80",
-    farBuild: "#785a6c", nearBuild: "#3d394f", window: "#ffd37d",
-    ground: "#3f363d", ballast: "#65524c", sleeper: "#4b3a35", rail: "#857778", railShine: "#ffe7c4",
-    wall: "#957465", wallDark: "#624d49",
+    skyTop: "#2a336b", skyMid: "#b7586e", skyLow: "#f9a456",
+    haze: "#df8c62", sun: "#ffce85", sunGlow: "#ff7633",
+    cloud: "#ffc39e", cloudShade: "#9c6378",
+    farBuild: "#6e5364", nearBuild: "#363247", window: "#ffcf73",
+    ground: "#383037", ballast: "#5c4a45", sleeper: "#443430", rail: "#7e7173", railShine: "#ffe2bc",
+    wall: "#8b6c5e", wallDark: "#594542",
     night: 0.36, sunY: 0.42, sunX: 0.83, fog: 0.78,
-    shadow: "#21161e", tint: "#ffd8c2"
+    shadow: "#1c1219", tint: "#ffd3bb"
   };
   const NIGHT = {
-    skyTop: "#061326", skyMid: "#0e2844", skyLow: "#315272",
-    haze: "#18334a", sun: "#d7e8ff", sunGlow: "#86bcff",
-    cloud: "#2d4b63", cloudShade: "#1a3248",
-    farBuild: "#172d3e", nearBuild: "#0c1c2b", window: "#ffd36d",
-    ground: "#161a20", ballast: "#2b2b2b", sleeper: "#302821", rail: "#6f7c86", railShine: "#e0f6ff",
-    wall: "#4b4b4b", wallDark: "#2e3032",
+    skyTop: "#050f1f", skyMid: "#0c223a", skyLow: "#264360",
+    haze: "#142b40", sun: "#d7e8ff", sunGlow: "#86bcff",
+    cloud: "#264157", cloudShade: "#162b3f",
+    farBuild: "#132635", nearBuild: "#0a1724", window: "#ffd36d",
+    ground: "#14181e", ballast: "#25272b", sleeper: "#2b241f", rail: "#6a7884", railShine: "#dff4ff",
+    wall: "#44474a", wallDark: "#292c30",
     night: 0.9, sunY: 0.3, sunX: 0.77, fog: 0.38,
-    shadow: "#000000", tint: "#9fc6e8"
+    shadow: "#000000", tint: "#9ac2e6"
   };
   const DAWN = {
-    skyTop: "#385b91", skyMid: "#9c96b4", skyLow: "#ffcda5",
-    haze: "#d5b6ae", sun: "#fff3d6", sunGlow: "#ffc4a0",
-    cloud: "#f3d9d0", cloudShade: "#9c99b0",
-    farBuild: "#817f97", nearBuild: "#3f4b61", window: "#ffe0a2",
-    ground: "#3e4048", ballast: "#665d57", sleeper: "#4e4038", rail: "#889093", railShine: "#f7f4e8",
-    wall: "#a49388", wallDark: "#6b605b",
+    skyTop: "#335488", skyMid: "#948fac", skyLow: "#fcc79f",
+    haze: "#ceafa7", sun: "#fff1d2", sunGlow: "#ffbf98",
+    cloud: "#eed3ca", cloudShade: "#9491a8",
+    farBuild: "#78768f", nearBuild: "#394459", window: "#ffdc9c",
+    ground: "#393c44", ballast: "#5f5751", sleeper: "#473a33", rail: "#848c90", railShine: "#f4f1e4",
+    wall: "#9b8b80", wallDark: "#635954",
     night: 0.24, sunY: 0.24, sunX: 0.27, fog: 0.7,
-    shadow: "#181925", tint: "#fff3e8"
+    shadow: "#151722", tint: "#fff0e3"
   };
 
   const THEMES = [
@@ -170,11 +170,13 @@
   }
 
   // ------------------------------------------------------------
-  // Runner palettes
+  // Runner palettes (3 starter + 1 unlockable pro courier)
   // ------------------------------------------------------------
   const SKINS = {
     dash: {
       name: "DASH",
+      trait: "Street rookie",
+      cost: 0,
       hoodie: "#ff7a2f", hoodieDark: "#d64b18", hoodieLight: "#ffa363",
       pants: "#203d59", pantsDark: "#142a40", shoe: "#f6ead6", sole: "#ffc62d",
       cap: "#19b9a5", capDark: "#0b7b70", skin: "#8d5a3c", skinDark: "#6e422b",
@@ -183,6 +185,8 @@
     },
     mika: {
       name: "MIKA",
+      trait: "Rail artist",
+      cost: 0,
       hoodie: "#19bfae", hoodieDark: "#0b8279", hoodieLight: "#63ead7",
       pants: "#44346b", pantsDark: "#2d2449", shoe: "#fff3da", sole: "#ff4f8b",
       cap: "#ff4f8b", capDark: "#b4265b", skin: "#b97b50", skinDark: "#925c38",
@@ -191,11 +195,23 @@
     },
     rook: {
       name: "ROOK",
+      trait: "Ex-inspector",
+      cost: 0,
       hoodie: "#e7443f", hoodieDark: "#a8212c", hoodieLight: "#ff786a",
       pants: "#1e2734", pantsDark: "#101722", shoe: "#dce2de", sole: "#41d3ff",
       cap: "#161d2a", capDark: "#070c13", skin: "#6d4632", skinDark: "#4e2f20",
       hair: "#131313", pack: "#3a4657", packDark: "#232d3a", accent: "#46d7ff",
       board: "#46d7ff", boardAccent: "#ffc62d", css: "#e7443f"
+    },
+    vex: {
+      name: "VEX",
+      trait: "Night courier",
+      cost: 350,
+      hoodie: "#273342", hoodieDark: "#161e29", hoodieLight: "#4c627a",
+      pants: "#181d26", pantsDark: "#0d1117", shoe: "#f2f5f7", sole: "#ff6a2b",
+      cap: "#f5b82e", capDark: "#b57d0e", skin: "#c9926b", skinDark: "#9c6d4d",
+      hair: "#16141a", pack: "#ff6a2b", packDark: "#c24413", accent: "#ffc62d",
+      board: "#ffc62d", boardAccent: "#58dcff", css: "#f5b82e"
     }
   };
 
@@ -203,15 +219,17 @@
     magnet: { name: "COIN MAGNET", short: "MAGNET", color: "#58dcff", icon: "M", duration: 10 },
     multiplier: { name: "DOUBLE SCORE", short: "2× SCORE", color: "#ffc62d", icon: "×2", duration: 12 },
     sneakers: { name: "SUPER SNEAKERS", short: "SNEAKERS", color: "#ff7a2f", icon: "⚡", duration: 12 },
+    jetpack: { name: "TURBO JETPACK", short: "JETPACK", color: "#ff4f8b", icon: "▲", duration: 7.5 },
     board: { name: "HOVERBOARD", short: "HOVERBOARD", color: "#2fe6c2", icon: "▰", duration: 0 }
   };
 
   const MISSION_DEFS = [
-    { metric: "coins", targets: [35, 50, 65, 85], label: (n) => "Collect " + n + " coins", unit: "" },
-    { metric: "distance", targets: [350, 500, 700, 900], label: (n) => "Run " + n + " metres", unit: " m" },
+    { metric: "coins", targets: [40, 55, 75, 95], label: (n) => "Collect " + n + " coins", unit: "" },
+    { metric: "distance", targets: [350, 550, 750, 1000], label: (n) => "Run " + n + " metres", unit: " m" },
     { metric: "jumps", targets: [7, 10, 14, 18], label: (n) => "Jump " + n + " times", unit: "" },
     { metric: "powerups", targets: [2, 3, 4], label: (n) => "Grab " + n + " power-ups", unit: "" },
     { metric: "rolls", targets: [4, 6, 9], label: (n) => "Roll " + n + " times", unit: "" },
+    { metric: "nearMisses", targets: [3, 5, 7], label: (n) => "Nail " + n + " close calls", unit: "" },
     { metric: "boards", targets: [1, 2], label: (n) => "Deploy " + n + " hoverboard" + (n > 1 ? "s" : ""), unit: "" }
   ];
 
@@ -241,36 +259,65 @@
   }
 
   const CONFIG = {
-    baseSpeed: 15.5,
-    maxSpeed: 45,
-    speedRamp: 0.0155,
-    gravity: 30,
-    jumpVelocity: 12.4,
-    laneSnap: 13.5,
+    baseSpeed: 16.0,
+    maxSpeed: 48,
+    speedRamp: 0.016,
+    gravity: 31,
+    jumpVelocity: 12.6,
+    laneSnap: 14.5,
     rollTime: 0.62,
     trainHeight: 2.16,
-    magnetRadius: 22,
-    spawnHorizon: 172,
+    jetpackHeight: 4.5,
+    magnetRadius: 24,
+    spawnHorizon: 178,
     tieGap: 2.55,
     cameraZ: -7,
-    countdown: 0.9
+    countdown: 0.9,
+    tunnelPeriod: 460,
+    tunnelLength: 88
   };
+
+  function defaultUpgrades() {
+    return { magnet: 0, multiplier: 0, sneakers: 0, jetpack: 0 };
+  }
 
   function loadSave() {
     const fallback = {
-      highScore: 0, totalCoins: 0, runs: 0, bestDistance: 0,
-      skin: "dash", muted: false, played: false
+      highScore: 0,
+      totalCoins: 0,
+      runs: 0,
+      bestDistance: 0,
+      skin: "dash",
+      unlockedSkins: ["dash", "mika", "rook"],
+      upgrades: defaultUpgrades(),
+      boardStock: 1,
+      weatherMode: "auto",
+      muted: false,
+      played: false
     };
     try {
       const raw = localStorage.getItem("subwaySuffer.save.v1");
       if (!raw) return fallback;
       const data = JSON.parse(raw);
+      const unlocked = Array.isArray(data.unlockedSkins)
+        ? Array.from(new Set(["dash", "mika", "rook", ...data.unlockedSkins.filter((k) => SKINS[k])]))
+        : ["dash", "mika", "rook"];
+      const skin = SKINS[data.skin] && unlocked.includes(data.skin) ? data.skin : "dash";
+      const upgrades = Object.assign(defaultUpgrades(), data.upgrades || {});
+      for (const k of Object.keys(upgrades)) {
+        upgrades[k] = clamp(Math.floor(Number(upgrades[k]) || 0), 0, 5);
+      }
+      const weatherMode = ["auto", "clear", "rain"].includes(data.weatherMode) ? data.weatherMode : "auto";
       return {
         highScore: Math.max(0, Number(data.highScore) || 0),
         totalCoins: Math.max(0, Number(data.totalCoins) || 0),
         runs: Math.max(0, Number(data.runs) || 0),
         bestDistance: Math.max(0, Number(data.bestDistance) || 0),
-        skin: SKINS[data.skin] ? data.skin : "dash",
+        skin,
+        unlockedSkins: unlocked,
+        upgrades,
+        boardStock: clamp(Math.floor(Number(data.boardStock) || 1), 1, 5),
+        weatherMode,
         muted: !!data.muted,
         played: !!data.played
       };
@@ -295,8 +342,9 @@
     focal: 800,
     camY: 3.4,
     camZ: CONFIG.cameraZ,
-    laneW: 1.5,
+    laneW: 1.75,
     camX: 0,
+    camRoll: 0,
     shakeX: 0,
     shakeY: 0
   };

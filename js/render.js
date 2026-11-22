@@ -120,14 +120,22 @@
     canvas.style.height = H + "px";
     if (ctx) ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 
+    const metrics = SS.Logic
+      ? SS.Logic.computeViewportMetrics(W, H)
+      : {
+          horizon: H * 0.295,
+          focal: Math.min(H * 1.08, W * 1.7),
+          camY: ((H * 0.81 - H * 0.295) * 7) / Math.min(H * 1.08, W * 1.7),
+          laneW: clamp((W / H) * 1.28, 1.32, 2.25)
+        };
     view.w = W;
     view.h = H;
     view.dpr = DPR;
-    view.horizon = H * 0.295;
-    view.focal = Math.min(H * 1.08, W * 1.7);
-    const footY = H * 0.81;
-    view.camY = ((footY - view.horizon) * 7) / view.focal;
-    view.laneW = clamp(0.94, 2.35, (W / H) * 1.35);
+    view.horizon = metrics.horizon;
+    view.focal = metrics.focal;
+    view.baseCamY = metrics.camY;
+    view.camY = metrics.camY;
+    view.laneW = metrics.laneW;
     view.camZ = SS.CONFIG.cameraZ;
 
     buildScene();
@@ -172,13 +180,13 @@
       {
         span,
         scroll: 0.12,
-        list: makeLayer(28, 0.022, 0.065, 0.08, 0.23, 16),
+        list: makeLayer(28, 0.022, 0.065, 0.06, 0.19, 16),
         kind: "far"
       },
       {
         span,
         scroll: 0.25,
-        list: makeLayer(22, 0.035, 0.11, 0.10, 0.34, 28),
+        list: makeLayer(22, 0.032, 0.092, 0.08, 0.24, 28),
         kind: "near"
       }
     ];
@@ -219,7 +227,18 @@
       signals.push({ z: i * 21 + 9, side: i % 2 === 0 ? -1 : 1 });
     }
 
-    scene = { layers, clouds, stars, stones, signals, span };
+    const raindrops = [];
+    for (let i = 0; i < 110; i++) {
+      raindrops.push({
+        x: rng(),
+        y: rng(),
+        len: 12 + rng() * 22,
+        speed: 1.15 + rng() * 0.9,
+        alpha: 0.16 + rng() * 0.28
+      });
+    }
+
+    scene = { layers, clouds, stars, stones, signals, raindrops, span };
   }
 
   // ------------------------------------------------------------
@@ -432,7 +451,8 @@
     quad(nearL, shoulderL1, shoulderL2, farL, U.mixHex(theme.wallDark, theme.ground, 0.35));
     quad(nearR, shoulderR1, shoulderR2, farR, U.mixHex(theme.wallDark, theme.ground, 0.4));
 
-    // Faint lane-colored service strips.
+    // Faint lane-colored service strips + wet rain sheen.
+    const rain = g.rain || 0;
     for (let i = 0; i < 3; i++) {
       const lx = laneX(i);
       const half = view.laneW * 0.6;
@@ -440,7 +460,19 @@
       const b = project(lx + half, 0.005, -2);
       const c = project(lx + half, 0.005, 165);
       const d = project(lx - half, 0.005, 165);
-      quad(a, b, c, d, U.rgba(U.shade(theme.ballast, -0.1), 0.32));
+      quad(a, b, c, d, U.rgba(U.shade(theme.ballast, rain > 0.1 ? -0.22 : -0.1), 0.34 + rain * 0.18));
+    }
+
+    if (rain > 0.05) {
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      const sheen = ctx.createLinearGradient(0, horizon, 0, H);
+      sheen.addColorStop(0, U.rgba(theme.skyLow, 0.02));
+      sheen.addColorStop(0.55, U.rgba(theme.skyMid, 0.09 * rain));
+      sheen.addColorStop(1, U.rgba("#d8eeff", 0.12 * rain));
+      ctx.fillStyle = sheen;
+      ctx.fillRect(0, horizon, W, H - horizon);
+      ctx.restore();
     }
   }
 
@@ -540,7 +572,7 @@
   }
 
   function railGauge() {
-    return clamp(0.32, 0.78, view.laneW * 0.34);
+    return clamp(view.laneW * 0.34, 0.36, 0.76);
   }
 
   function pixelsPerMeter(z) {
@@ -580,8 +612,9 @@
   ];
 
   function drawEntity(e, theme, g) {
-    if (!e || e.z < -24 || e.z > 182) return;
+    if (!e || e.z < -26 || e.z > 186) return;
     if (e.type === "train") drawTrain(e, theme, g);
+    else if (e.type === "ramp") drawRamp(e, theme, g);
     else if (e.type === "barrier") drawBarrier(e, theme, g);
     else if (e.type === "overhead") drawOverhead(e, theme, g);
     else if (e.type === "coin") drawCoin(e, theme, g);
@@ -595,8 +628,8 @@
     }
     const list = g.entities || [];
     const sorted = list.slice().sort((a, b) => {
-      const da = a.type === "train" ? a.z - (a.len || 16) * 0.5 : a.z;
-      const db = b.type === "train" ? b.z - (b.len || 16) * 0.5 : b.z;
+      const da = a.type === "train" ? a.z - (a.len || 16) * 0.5 : a.type === "ramp" ? a.z - (a.len || 7) * 0.45 : a.z;
+      const db = b.type === "train" ? b.z - (b.len || 16) * 0.5 : b.type === "ramp" ? b.z - (b.len || 7) * 0.45 : b.z;
       return db - da;
     });
     for (const e of sorted) drawEntity(e, theme, g);
@@ -859,34 +892,71 @@
     quad(wsL, wsR, wsT, wsTL, U.mixHex("#0b1f2a", theme.window, 0.22 + theme.night * 0.25), "rgba(5,14,18,0.6)", Math.max(0.4, wsL.s * 0.002));
     line(wsL.x + 2, wsL.y - 2, wsT.x - 2, wsT.y + 2, "rgba(220,247,255,0.24)", Math.max(0.5, wsL.s * 0.004));
 
-    // Route number badge.
+    // Route number badge (moving express trains show illuminated EXP sign).
     const routeY = 2.01;
-    const route = project(x - faceW * 0.32, routeY, zN - 0.02);
-    const route2 = project(x + faceW * 0.32, routeY, zN - 0.02);
+    const route = project(x - faceW * 0.34, routeY, zN - 0.02);
+    const route2 = project(x + faceW * 0.34, routeY, zN - 0.02);
     const rw = Math.abs(route2.x - route.x);
-    ctx.fillStyle = "rgba(7,18,23,0.72)";
+    ctx.fillStyle = "rgba(7,18,23,0.82)";
     ctx.fillRect(Math.min(route.x, route2.x), route.y - Math.max(3, rw * 0.38), rw, Math.max(5, rw * 0.58));
-    if (rw > 25) {
-      ctx.fillStyle = "rgba(255,220,125,0.72)";
-      ctx.font = "900 " + Math.max(6, rw * 0.36) + "px 'Arial Black', sans-serif";
+    if (rw > 22) {
+      ctx.fillStyle = e.moving ? "rgba(255,115,90,0.95)" : "rgba(255,220,125,0.78)";
+      ctx.font = "900 " + Math.max(6, rw * 0.33) + "px 'Arial Black', sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(e.variant % 2 === 0 ? "M9" : "N", (route.x + route2.x) * 0.5, route.y + Math.max(1, rw * 0.002));
+      ctx.fillText(e.moving ? "EXP" : (e.variant % 2 === 0 ? "M9" : "N"), (route.x + route2.x) * 0.5, route.y + Math.max(1, rw * 0.002));
     }
 
-    // Headlights and their atmospheric bloom.
+    // Roof pantograph for moving express trains reaching up to the catenary line.
+    if (!isMenu && e.moving && zN < 115 && zN > -4) {
+      const pz = zN + Math.min(3.5, len * 0.22);
+      const pBase = project(x, h + 0.04, pz);
+      const pMid = project(x + 0.16, h + 1.05, pz + 0.45);
+      const pTopL = project(x - 0.42, 4.92, pz);
+      const pTopR = project(x + 0.42, 4.92, pz);
+      const pTopM = project(x, 4.92, pz);
+      const lw = Math.max(1, pBase.s * 0.015);
+      line(pBase.x, pBase.y, pMid.x, pMid.y, "#2a343b", lw);
+      line(pMid.x, pMid.y, pTopM.x, pTopM.y, "#46555e", lw);
+      line(pTopL.x, pTopL.y, pTopR.x, pTopR.y, "#d6e6ee", Math.max(1.2, lw * 1.1));
+      if (Math.sin(g.time * 28 + e.z) > 0.86) {
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        ell(pTopM.x, pTopM.y, Math.max(4, pTopM.s * 0.18), Math.max(4, pTopM.s * 0.18), "rgba(130,225,255,0.75)");
+        ctx.restore();
+      }
+    }
+
+    // Headlights + realistic volumetric rail beam for oncoming express trains & night runs.
     if (!isMenu) {
       const lightY = 0.72;
+      const beamStrength = e.moving ? 0.42 + theme.night * 0.35 + (g.tunnel || 0) * 0.3 : theme.night * 0.32 + (g.tunnel || 0) * 0.35;
+      if (beamStrength > 0.15 && zN > 1 && zN < 110) {
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        const bFarZ = Math.max(-2, zN - (e.moving ? 16 : 9));
+        const coneL = project(x - faceW * 1.45, 0.04, bFarZ);
+        const coneR = project(x + faceW * 1.45, 0.04, bFarZ);
+        const srcL = project(x - faceW * 0.62, lightY, zN - 0.06);
+        const srcR = project(x + faceW * 0.62, lightY, zN - 0.06);
+        const beamGrad = ctx.createLinearGradient(0, srcL.y, 0, coneL.y);
+        beamGrad.addColorStop(0, "rgba(255,244,195," + clamp(beamStrength * 0.55, 0, 0.55) + ")");
+        beamGrad.addColorStop(1, "rgba(255,244,195,0)");
+        fillPoly([srcL, srcR, coneR, coneL], beamGrad);
+        ctx.restore();
+      }
+
       for (const side of [-1, 1]) {
         const lp = project(x + side * faceW * 0.56, lightY, zN - 0.06);
-        if (lp.s > 10) {
-          ctx.globalAlpha = 0.5;
-          ell(lp.x, lp.y, Math.max(1.5, lp.s * 0.045), Math.max(1, lp.s * 0.028), "#fff8cb");
+        if (lp.s > 8) {
+          const isFlashingDitch = e.moving && ((Math.floor(g.time * 6) + (side > 0 ? 1 : 0)) % 2 === 0);
+          ctx.globalAlpha = e.moving ? 0.92 : 0.55;
+          ell(lp.x, lp.y, Math.max(1.8, lp.s * (e.moving ? 0.06 : 0.045)), Math.max(1.2, lp.s * 0.036), isFlashingDitch ? "#ffffff" : "#fff6c2");
           ctx.globalAlpha = 1;
-          if (theme.night > 0.25 && e.z < 55) {
-            const r = Math.max(4, lp.s * 0.26);
+          if ((e.moving || theme.night > 0.2 || (g.tunnel || 0) > 0.2) && e.z < 90) {
+            const r = Math.max(5, lp.s * (e.moving ? 0.36 : 0.26));
             const gl = ctx.createRadialGradient(lp.x, lp.y, 1, lp.x, lp.y, r);
-            gl.addColorStop(0, "rgba(255,244,190,0.25)");
+            gl.addColorStop(0, e.moving ? "rgba(255,246,200,0.52)" : "rgba(255,244,190,0.28)");
             gl.addColorStop(1, "rgba(255,244,190,0)");
             ctx.fillStyle = gl;
             ctx.fillRect(lp.x - r, lp.y - r, r * 2, r * 2);
@@ -895,14 +965,81 @@
       }
     }
 
-    // A little front grime, number patch and warning text.
+    // Atmospheric distance fog tint for realistic depth perception.
+    const distFog = U.smoothstep(74, 174, zN) * (0.45 + (1 - theme.night) * 0.15);
+    if (distFog > 0.03) {
+      ctx.save();
+      ctx.globalAlpha = distFog;
+      quad(fnl, fnr, fntr, fntl, theme.haze);
+      ctx.restore();
+    }
+
+    // A little front grime and coupling hardware when close.
     if (fnl.s > 30) {
+      const coupler = project(x, 0.24, zN - 0.05);
+      ell(coupler.x, coupler.y, Math.max(2, coupler.s * 0.09), Math.max(1.4, coupler.s * 0.055), "#1b2226");
       ctx.globalAlpha = 0.2;
       for (let i = 0; i < 3; i++) {
         const gp = project(x - faceW + faceW * (0.2 + i * 0.3), 0.82 + i * 0.06, zN - 0.03);
         line(gp.x, gp.y, gp.x + faceW * 0.15, gp.y + 8, "rgba(20,29,31,0.5)", Math.max(0.5, fnl.s * 0.006));
       }
       ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawRamp(e, theme, g) {
+    const x = laneX(e.lane);
+    const len = e.len || 7.2;
+    const h = e.targetHeight || SS.CONFIG.trainHeight;
+    const hw = view.laneW * 0.38;
+    const zN = e.z - len * 0.5;
+    const zF = e.z + len * 0.5;
+    if (zF < -4 || zN > 165) return;
+
+    const nl = project(x - hw, 0.03, zN);
+    const nr = project(x + hw, 0.03, zN);
+    const fl = project(x - hw, h, zF);
+    const fr = project(x + hw, h, zF);
+    const fbl = project(x - hw, 0.03, zF);
+    const fbr = project(x + hw, 0.03, zF);
+
+    // Side structural wedge.
+    const sideX = view.camX <= x ? x - hw : x + hw;
+    const sN = project(sideX, 0.03, zN);
+    const sFTop = project(sideX, h, zF);
+    const sFBot = project(sideX, 0.03, zF);
+    fillPoly([sN, sFTop, sFBot], U.mixHex("#363d42", theme.wallDark, 0.35), "rgba(10,16,20,0.55)", 1);
+
+    // Grounded shadow under ramp.
+    ctx.save();
+    ctx.globalAlpha = 0.28;
+    fillPoly([nl, nr, fbr, fbl], theme.shadow);
+    ctx.restore();
+
+    // Steel tread slope surface.
+    quad(nl, nr, fr, fl, "#5a6369", "rgba(15,22,26,0.65)", Math.max(0.8, nl.s * 0.004));
+
+    // Yellow safety side rails and ascending chevron arrows.
+    for (const side of [-1, 1]) {
+      const r0 = project(x + side * hw * 0.94, 0.08, zN);
+      const r1 = project(x + side * hw * 0.94, h + 0.06, zF);
+      line(r0.x, r0.y, r1.x, r1.y, "#f4b928", Math.max(1.5, r0.s * 0.025));
+    }
+
+    for (let i = 1; i <= 4; i++) {
+      const t = i / 5;
+      const cz = lerp(zN, zF, t);
+      const cy = lerp(0.06, h + 0.02, t);
+      const left = project(x - hw * 0.45, cy - 0.08, cz - 0.35);
+      const tip = project(x, cy + 0.08, cz + 0.35);
+      const right = project(x + hw * 0.45, cy - 0.08, cz - 0.35);
+      ctx.strokeStyle = "rgba(255,214,72,0.85)";
+      ctx.lineWidth = Math.max(1.2, tip.s * 0.025);
+      ctx.beginPath();
+      ctx.moveTo(left.x, left.y);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.lineTo(right.x, right.y);
+      ctx.stroke();
     }
   }
 
@@ -1203,6 +1340,22 @@
     } else if (e.power === "sneakers") {
       ctx.font = "900 " + r * 1.02 + "px 'Arial Black', sans-serif";
       ctx.fillText("⚡", 0, r * 0.04);
+    } else if (e.power === "jetpack") {
+      // Twin thruster rocket silhouette
+      ctx.fillStyle = def.color;
+      roundRectPath(-r * 0.34, -r * 0.32, r * 0.26, r * 0.56, r * 0.1);
+      ctx.fill();
+      roundRectPath(r * 0.08, -r * 0.32, r * 0.26, r * 0.56, r * 0.1);
+      ctx.fill();
+      ctx.fillStyle = "#ffe588";
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.28, r * 0.24);
+      ctx.lineTo(-r * 0.21, r * 0.48);
+      ctx.lineTo(-r * 0.14, r * 0.24);
+      ctx.moveTo(r * 0.14, r * 0.24);
+      ctx.lineTo(r * 0.21, r * 0.48);
+      ctx.lineTo(r * 0.28, r * 0.24);
+      ctx.fill();
     } else {
       ctx.save();
       ctx.rotate(-0.16);
@@ -1231,8 +1384,12 @@
     const theme = g.theme || SS.themeFor(0);
     lastFramePalette = theme;
     const movementReference = g.mode === "menu" ? g.menuScroll : g.distance;
-    const camFollow = g.player ? g.player.x * 0.14 : 0;
+    const camFollow = g.player ? g.player.x * 0.16 : 0;
+    const baseCamY = view.baseCamY || view.camY;
+    const targetCamY = baseCamY + (g.player ? g.player.y * 0.56 : 0);
+    view.camY = lerp(view.camY, targetCamY, 0.16);
     view.camX = camFollow + (g.cameraOffset || 0);
+    view.camRoll = lerp(view.camRoll || 0, g.player ? -(g.player.tilt || 0) * 0.018 : 0, 0.18);
     view.shakeX = g.shakeX || 0;
     view.shakeY = g.shakeY || 0;
 
@@ -1241,16 +1398,118 @@
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
 
+    ctx.save();
+    if (Math.abs(view.camRoll) > 0.0004) {
+      ctx.translate(W * 0.5, H * 0.5);
+      ctx.rotate(view.camRoll);
+      ctx.translate(-W * 0.5, -H * 0.5);
+    }
+
     drawSky(g, theme, g.time);
     drawSkyline(g, theme, g.time);
     drawGround(g, theme);
     drawTracks(g, theme);
     drawTrackside(g, theme, movementReference);
+    drawCatenary(theme);
+    drawTunnel(g, theme);
     drawWorld(g, theme);
     drawAtmosphere(g, theme);
     drawPlayer(g, theme);
+    drawInspector(g, theme);
+    drawRain(g, theme);
     drawParticles(g);
     drawForeground(g, theme);
+
+    ctx.restore();
+  }
+
+  function drawCatenary(theme) {
+    // Authentic electrified overhead contact and messenger wires down each track.
+    ctx.save();
+    const wireCol = U.rgba(theme.night > 0.45 ? "#95b2c4" : "#18242b", 0.34);
+    for (let lane = 0; lane < 3; lane++) {
+      const lx = laneX(lane);
+      const n0 = project(lx, 4.92, -3);
+      const f0 = project(lx, 4.92, 150);
+      line(n0.x, n0.y, f0.x, f0.y, wireCol, 1.1);
+      const n1 = project(lx, 5.42, -3);
+      const f1 = project(lx, 5.42, 150);
+      line(n1.x, n1.y, f1.x, f1.y, U.rgba(theme.night > 0.45 ? "#7a98ab" : "#1d2a33", 0.2), 0.75);
+    }
+    ctx.restore();
+  }
+
+  function drawTunnel(g, theme) {
+    const tunnel = g.tunnel || 0;
+    if (tunnel <= 0.02 || g.mode === "menu") return;
+    const wallX = view.laneW * 2.02 + 1.05;
+    const ceilY = 6.35;
+    const scroll = g.distance || 0;
+    const archGap = 16;
+    const offset = scroll % archGap;
+
+    ctx.save();
+    // Overhead concrete tunnel slab darkening the sky when inside the tunnel.
+    const topFar = project(-wallX, ceilY, 130);
+    const ceilingH = Math.max(0, topFar.y + H * 0.08);
+    ctx.fillStyle = "rgba(8, 14, 20, " + (tunnel * 0.88) + ")";
+    ctx.fillRect(0, 0, W, ceilingH);
+
+    // Concrete rib arches & glowing sodium strip lights.
+    for (let i = 7; i >= 0; i--) {
+      const z = i * archGap - offset + 2;
+      if (z < -2 || z > 120) continue;
+      const lBase = project(-wallX, 0, z);
+      const rBase = project(wallX, 0, z);
+      const lTop = project(-wallX, ceilY, z);
+      const rTop = project(wallX, ceilY, z);
+      const ribW = Math.max(2, lBase.s * 0.14);
+      ctx.globalAlpha = tunnel * clamp(1 - z / 120, 0.15, 0.95);
+      line(lBase.x, lBase.y, lTop.x, lTop.y, "#141d24", ribW);
+      line(rBase.x, rBase.y, rTop.x, rTop.y, "#141d24", ribW);
+      line(lTop.x, lTop.y, rTop.x, rTop.y, "#10181f", ribW * 1.15);
+
+      // Warm overhead sodium vapor tube light
+      const lightL = project(-view.laneW * 0.7, ceilY - 0.16, z);
+      const lightR = project(view.laneW * 0.7, ceilY - 0.16, z);
+      line(lightL.x, lightL.y, lightR.x, lightR.y, "#ffdf9c", Math.max(1.5, lBase.s * 0.032));
+      const midX = (lightL.x + lightR.x) * 0.5;
+      const midY = (lightL.y + lightR.y) * 0.5;
+      const glowR = Math.max(10, lBase.s * 0.55);
+      const gl = ctx.createRadialGradient(midX, midY, 2, midX, midY, glowR);
+      gl.addColorStop(0, "rgba(255,214,132," + (0.28 * tunnel) + ")");
+      gl.addColorStop(1, "rgba(255,214,132,0)");
+      ctx.fillStyle = gl;
+      ctx.fillRect(midX - glowR, midY - glowR, glowR * 2, glowR * 2);
+    }
+
+    // Subtle interior mood darkening.
+    ctx.globalAlpha = tunnel * 0.24;
+    ctx.fillStyle = "#040b12";
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  function drawRain(g, theme) {
+    const rain = g.rain || 0;
+    if (rain <= 0.02 || !scene.raindrops) return;
+    const tunnelDamp = 1 - (g.tunnel || 0) * 0.85;
+    const effective = rain * tunnelDamp;
+    if (effective <= 0.02) return;
+    ctx.save();
+    ctx.strokeStyle = theme.night > 0.4 ? "rgba(180,220,255,0.34)" : "rgba(230,244,255,0.32)";
+    ctx.lineWidth = 1.1;
+    const wind = -3.8 - (g.speed || 0) * 0.08;
+    for (const d of scene.raindrops) {
+      const y = ((d.y + g.time * d.speed) % 1) * H;
+      const x = ((d.x + g.time * 0.06) % 1) * W;
+      ctx.globalAlpha = d.alpha * effective;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + wind, y + d.len);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // ------------------------------------------------------------
@@ -1479,7 +1738,7 @@
         line(base.x, base.y, top.x, top.y, U.mixHex(theme.wallDark, "#1a252b", 0.42), width);
         line(base.x + width * 0.3, base.y, top.x + width * 0.2, top.y, U.rgba("#ffffff", 0.08), Math.max(0.5, width * 0.3));
         const arm = project(x, 5.75, z);
-        const armHalf = clamp(0.32, 0.75, view.laneW * 0.22);
+        const armHalf = clamp(view.laneW * 0.22, 0.32, 0.75);
         const left = project(x - armHalf, 5.75, z);
         const right = project(x + armHalf, 5.75, z);
         line(left.x, left.y, right.x, right.y, U.mixHex(theme.wallDark, "#1a252b", 0.35), Math.max(1, width * 0.8));
@@ -1658,44 +1917,38 @@
   // ------------------------------------------------------------
   function drawAtmosphere(g, theme) {
     const horizon = view.horizon;
-    const fog = ctx.createLinearGradient(0, horizon - H * 0.03, 0, horizon + H * 0.34);
-    fog.addColorStop(0, U.rgba(theme.haze, 0.64));
-    fog.addColorStop(0.25, U.rgba(theme.haze, 0.35));
-    fog.addColorStop(0.62, U.rgba(theme.haze, 0.08));
+    // Smooth feathered horizon haze (0 -> peak at horizon -> 0) with no hard band edge.
+    const fogTop = horizon - H * 0.14;
+    const fogBot = horizon + H * 0.28;
+    const fog = ctx.createLinearGradient(0, fogTop, 0, fogBot);
+    fog.addColorStop(0, U.rgba(theme.haze, 0));
+    fog.addColorStop(0.32, U.rgba(theme.haze, 0.36));
+    fog.addColorStop(0.52, U.rgba(theme.haze, 0.22));
+    fog.addColorStop(0.78, U.rgba(theme.haze, 0.05));
     fog.addColorStop(1, U.rgba(theme.haze, 0));
     ctx.fillStyle = fog;
-    ctx.fillRect(0, horizon - H * 0.045, W, H * 0.38);
+    ctx.fillRect(0, fogTop, W, fogBot - fogTop);
 
     if (theme.night < 0.55) {
       const sunX = W * theme.sunX - view.camX * 6;
-      const sunY = horizon - H * 0.205;
+      const sunY = horizon - H * 0.18;
       ctx.save();
       ctx.globalCompositeOperation = "screen";
-      const beams = 5;
-      for (let i = 0; i < beams; i++) {
-        const angle = -0.75 + i * 0.18 + Math.sin(g.time * 0.08 + i) * 0.015;
-        const length = H * 1.2;
-        const spread = H * 0.11;
-        const grad = ctx.createLinearGradient(sunX, sunY, sunX + Math.cos(angle) * length, sunY + Math.sin(angle) * length);
-        grad.addColorStop(0, U.rgba(theme.sunGlow, 0.055));
-        grad.addColorStop(0.4, U.rgba(theme.sunGlow, 0.022));
-        grad.addColorStop(1, U.rgba(theme.sunGlow, 0));
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(sunX, sunY);
-        ctx.lineTo(sunX + Math.cos(angle - 0.1) * length, sunY + Math.sin(angle - 0.1) * length - spread);
-        ctx.lineTo(sunX + Math.cos(angle + 0.1) * length, sunY + Math.sin(angle + 0.1) * length + spread);
-        ctx.closePath();
-        ctx.fill();
-      }
+      const glowR = Math.max(W, H) * 0.42;
+      const halo = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, glowR);
+      halo.addColorStop(0, U.rgba(theme.sunGlow, 0.16));
+      halo.addColorStop(0.35, U.rgba(theme.sunGlow, 0.06));
+      halo.addColorStop(1, U.rgba(theme.sunGlow, 0));
+      ctx.fillStyle = halo;
+      ctx.fillRect(0, 0, W, horizon + H * 0.3);
       ctx.restore();
     }
 
-    // A low warm wash ties the palette together.
+    // Subtle atmospheric color wash across the tracks.
     ctx.save();
     ctx.globalCompositeOperation = "overlay";
     const wash = ctx.createLinearGradient(0, horizon, 0, H);
-    wash.addColorStop(0, U.rgba(theme.tint, 0.06));
+    wash.addColorStop(0, U.rgba(theme.tint, 0.05));
     wash.addColorStop(1, U.rgba(theme.tint, 0));
     ctx.fillStyle = wash;
     ctx.fillRect(0, horizon, W, H - horizon);
@@ -1786,9 +2039,9 @@
 
     // The runner is drawn in metres, facing away from the camera.
     const phase = isMenu ? g.time * 2.25 : p.runPhase;
-    const jumping = !p.onGround && !isBoard && !p.rolling;
-    const pose = p.rolling ? "roll" : isBoard ? "board" : jumping ? "jump" : "run";
-    const crouch = pose === "roll" ? 0.58 : 1;
+    const jetpacking = !isMenu && p.effects && p.effects.jetpack > 0;
+    const jumping = !p.onGround && !isBoard && !p.rolling && !jetpacking;
+    const pose = jetpacking ? "jetpack" : p.rolling ? "roll" : isBoard ? "board" : jumping ? "jump" : "run";
     const lean = pose === "run" ? 0.055 : pose === "jump" ? 0.03 : 0.02;
 
     ctx.translate(0, -runBob - (isBoard ? 0.1 : 0));
@@ -1798,7 +2051,9 @@
       ctx.scale(1.03, 0.66);
     }
 
-    if (pose === "board") {
+    if (pose === "jetpack") {
+      drawJetpackPose(skin, phase, g);
+    } else if (pose === "board") {
       drawBoardPose(skin, phase, g);
     } else if (pose === "jump") {
       drawJumpPose(skin, phase, g);
@@ -2184,6 +2439,173 @@
       left: [0.22, -0.52 + Math.sin(phase * 0.8) * 0.05],
       right: [-0.2, -0.52 - Math.sin(phase * 0.8) * 0.05]
     }, outline, g);
+  }
+
+  function drawJetpackPose(skin, phase, g) {
+    const outline = playerOutline();
+    const sway = Math.sin(g.time * 7) * 0.04;
+    // Swept-back flight legs.
+    drawLeg(skin, -0.11, -0.62, -0.16, -0.12 + sway, -0.14, -0.38, outline);
+    drawLeg(skin, 0.11, -0.62, 0.16, -0.06 - sway, 0.14, -0.34, outline);
+    drawTorsoAndHead(skin, phase * 0.3, 0.02, {
+      left: [0.32, -0.7],
+      right: [-0.32, -0.7]
+    }, outline, g);
+
+    // Twin metallic jetpack canisters & roaring exhaust flames.
+    ctx.save();
+    ctx.translate(0, -1.04);
+    for (const side of [-1, 1]) {
+      const cx = side * 0.13;
+      ctx.fillStyle = "#c8d6de";
+      ctx.strokeStyle = outline;
+      ctx.lineWidth = 0.024;
+      roundRectPath(cx - 0.075, -0.22, 0.15, 0.44, 0.06);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ff4f8b";
+      ctx.fillRect(cx - 0.065, -0.06, 0.13, 0.09);
+
+      // Flame cone
+      const flicker = 0.36 + Math.sin(g.time * 42 + side) * 0.1;
+      ctx.globalCompositeOperation = "screen";
+      ctx.fillStyle = "rgba(255,140,40,0.85)";
+      ctx.beginPath();
+      ctx.moveTo(cx - 0.06, 0.22);
+      ctx.lineTo(cx, 0.22 + flicker);
+      ctx.lineTo(cx + 0.06, 0.22);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,248,200,0.95)";
+      ctx.beginPath();
+      ctx.moveTo(cx - 0.032, 0.22);
+      ctx.lineTo(cx, 0.22 + flicker * 0.58);
+      ctx.lineTo(cx + 0.032, 0.22);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalCompositeOperation = "source-over";
+    }
+    ctx.restore();
+  }
+
+  function drawInspector(g, theme) {
+    if (g.mode === "menu") return;
+    const dist = g.inspectorDist == null ? 10 : g.inspectorDist;
+    if (dist > 5.8) return;
+
+    const p = g.player;
+    const z = -clamp(dist, 2.0, 5.6);
+    if (z <= view.camZ + 0.75) return;
+    const baseIx = lerp(p.x, g.inspectorX == null ? p.x : g.inspectorX, 0.55);
+    // Offset Inspector behind-left and K9 guard dog behind-right so the runner stays 100% readable.
+    const inspectorX = baseIx - 0.56;
+    const foot = project(inspectorX, 0, z);
+    const s = foot.s;
+    if (s <= 0) return;
+
+    const phase = g.time * 13.5;
+    const bob = Math.abs(Math.sin(phase)) * 0.035;
+    const outline = playerOutline();
+
+    // Ground shadow
+    ctx.save();
+    ctx.globalAlpha = 0.28;
+    ell(foot.x, foot.y, s * 0.3, Math.max(2, s * 0.06), theme.shadow);
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(foot.x, foot.y - bob * s);
+    ctx.scale(s * 0.88, s * 0.88);
+
+    const left = Math.sin(phase);
+    const right = Math.sin(phase + Math.PI);
+    const liftL = Math.max(0, left);
+    const liftR = Math.max(0, right);
+
+    // Transit Inspector trousers & boots
+    capsule(-0.12, -0.62, -0.15 + left * 0.12, -0.02 - liftL * 0.18, 0.145, "#1d293b", outline, 0.026);
+    capsule(0.12, -0.62, 0.15 + right * 0.12, -0.02 - liftR * 0.18, 0.145, "#152030", outline, 0.026);
+
+    // Uniform jacket with high-vis reflective yellow transit vest
+    ctx.fillStyle = "#1c2d42";
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 0.032;
+    roundRectPath(-0.26, -1.26, 0.52, 0.68, 0.16);
+    ctx.fill();
+    ctx.stroke();
+
+    // High-vis stripes
+    ctx.fillStyle = "#f2c629";
+    ctx.fillRect(-0.23, -1.04, 0.46, 0.07);
+    ctx.fillRect(-0.23, -0.86, 0.46, 0.07);
+
+    // Swinging arms + subtle flashlight beam
+    capsule(-0.26, -1.16, -0.34, -0.82 + left * 0.14, 0.125, "#1c2d42", outline, 0.024);
+    capsule(0.26, -1.16, 0.36, -0.84 + right * 0.12, 0.125, "#1c2d42", outline, 0.024);
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    const cone = ctx.createRadialGradient(0.36, -0.88, 0.03, 0.36, -1.12, 0.68);
+    cone.addColorStop(0, "rgba(255,244,185,0.28)");
+    cone.addColorStop(0.5, "rgba(255,244,185,0.08)");
+    cone.addColorStop(1, "rgba(255,244,185,0)");
+    ctx.fillStyle = cone;
+    ctx.beginPath();
+    ctx.arc(0.36, -1.0, 0.68, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+
+    // Inspector head + peaked transit cap
+    ctx.fillStyle = "#c89674";
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 0.028;
+    ctx.beginPath();
+    ctx.ellipse(0, -1.48, 0.18, 0.19, 0, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#152336";
+    ctx.beginPath();
+    ctx.moveTo(-0.22, -1.56);
+    ctx.quadraticCurveTo(-0.24, -1.78, 0, -1.8);
+    ctx.quadraticCurveTo(0.24, -1.78, 0.22, -1.56);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#ffc62d";
+    ctx.beginPath();
+    ctx.arc(0, -1.67, 0.045, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+
+    // K9 Guard Dog sprinting behind-right of the runner
+    const dogFoot = project(baseIx + 0.56, 0, z + 0.38);
+    const ds = dogFoot.s;
+    if (ds > 0) {
+      const dogBob = Math.abs(Math.sin(phase * 1.25)) * 0.045;
+      ctx.save();
+      ctx.translate(dogFoot.x, dogFoot.y - dogBob * ds);
+      ctx.scale(ds * 0.9, ds * 0.9);
+      ctx.fillStyle = "#5c3f29";
+      ctx.strokeStyle = outline;
+      ctx.lineWidth = 0.025;
+      roundRectPath(-0.14, -0.46, 0.28, 0.32, 0.12);
+      ctx.fill();
+      ctx.stroke();
+      // Ears
+      ctx.beginPath();
+      ctx.moveTo(-0.1, -0.44);
+      ctx.lineTo(-0.14, -0.62);
+      ctx.lineTo(-0.02, -0.46);
+      ctx.moveTo(0.1, -0.44);
+      ctx.lineTo(0.14, -0.62);
+      ctx.lineTo(0.02, -0.46);
+      ctx.fillStyle = "#3c2718";
+      ctx.fill();
+      // Legs
+      capsule(-0.09, -0.2, -0.11, -0.02 - liftR * 0.12, 0.065, "#462f1e", outline, 0.015);
+      capsule(0.09, -0.2, 0.11, -0.02 - liftL * 0.12, 0.065, "#462f1e", outline, 0.015);
+      ctx.restore();
+    }
   }
 
   // ------------------------------------------------------------
